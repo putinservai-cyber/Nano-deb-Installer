@@ -11,6 +11,7 @@ from PyQt5.QtWidgets import (
     QMessageBox,
     QPushButton,
     QVBoxLayout,
+    QToolButton,
     QWidget,
     QListWidget,
     QListWidgetItem,
@@ -21,6 +22,8 @@ from PyQt5.QtWidgets import (
 
 # Import AuthenticationDialog from gui_components (will be created next)
 from .gui_components import AuthenticationDialog
+from .donation_page import DonationPage
+from .report_page import ReportPage
 
 class SettingsManager:
     def __init__(self):
@@ -91,8 +94,19 @@ class GeneralSettingsWidget(QWidget):
         log_group = QGroupBox("Logging")
         log_layout = QVBoxLayout()
 
+        # Create a layout for the checkbox and help button
+        logging_option_layout = QHBoxLayout()
         self.cb_verbose_logging = QCheckBox("Enable verbose logging (for debugging)")
-        log_layout.addWidget(self.cb_verbose_logging)
+        logging_option_layout.addWidget(self.cb_verbose_logging)
+        logging_option_layout.addStretch()
+
+        btn_logging_help = QToolButton()
+        btn_logging_help.setIcon(QIcon.fromTheme("help-contextual"))
+        btn_logging_help.setToolTip("What's this?")
+        btn_logging_help.clicked.connect(self._show_verbose_logging_help)
+        logging_option_layout.addWidget(btn_logging_help)
+
+        log_layout.addLayout(logging_option_layout)
 
         log_group.setLayout(log_layout)
         layout.addWidget(log_group)
@@ -102,8 +116,18 @@ class GeneralSettingsWidget(QWidget):
         download_group = QGroupBox("Download Location")
         download_layout = QVBoxLayout()
 
+        download_label_layout = QHBoxLayout()
         download_label = QLabel("Default directory for dependency downloads:")
-        download_layout.addWidget(download_label)
+        download_label_layout.addWidget(download_label)
+        download_label_layout.addStretch()
+
+        btn_download_help = QToolButton()
+        btn_download_help.setIcon(QIcon.fromTheme("help-contextual"))
+        btn_download_help.setToolTip("What's this?")
+        btn_download_help.clicked.connect(self._show_download_dir_help)
+        download_label_layout.addWidget(btn_download_help)
+
+        download_layout.addLayout(download_label_layout)
 
         path_selection_layout = QHBoxLayout()
         self.le_download_path = QLineEdit()
@@ -143,6 +167,22 @@ class GeneralSettingsWidget(QWidget):
         if directory:
             self.settings_manager.set_default_download_directory(directory)
             self.le_download_path.setText(directory)
+
+    def _show_verbose_logging_help(self):
+        QMessageBox.information(
+            self,
+            "About Verbose Logging",
+            "When enabled, the application will show detailed logs during installation or uninstallation processes.\n\n"
+            "This is useful for debugging issues or for users who want to see exactly what commands are being run in the background."
+        )
+
+    def _show_download_dir_help(self):
+        QMessageBox.information(
+            self,
+            "About Default Download Directory",
+            "This setting specifies the default folder where any required dependencies for a package will be downloaded.\n\n"
+            "It is currently a placeholder for future functionality and does not affect the standard installation process."
+        )
 
 
 class InstallationSettingsWidget(QWidget):
@@ -277,6 +317,67 @@ class SecuritySettingsWidget(QWidget):
             self.settings_manager.set_setting("auto_password_enabled", "false")
             QMessageBox.information(self, "Password Cleared", "Automatic password entry has been disabled and the saved password has been cleared.")
 
+class ToolbarSettingsWidget(QWidget):
+    # restart_requested = pyqtSignal() # No longer needed, restart is not prompted.
+
+    def __init__(self, settings_manager, parent=None):
+        super().__init__(parent)
+        self.settings_manager = settings_manager
+        self._init_ui()
+        self._load_settings()
+
+    def _init_ui(self):
+        layout = QVBoxLayout(self)
+        layout.setAlignment(Qt.AlignTop)
+        layout.setContentsMargins(0, 0, 0, 0)
+
+        group = QGroupBox("Toolbar Actions")
+        group_layout = QVBoxLayout(group)
+
+        group_layout.addWidget(QLabel("Select which actions to display on the main toolbar."))
+
+        self.cb_show_settings = QCheckBox("Show 'Settings' action")
+        self.cb_show_update = QCheckBox("Show 'Check for Updates' action")
+        self.cb_show_report = QCheckBox("Show 'Report a Bug' action")
+        self.cb_show_donate = QCheckBox("Show 'Donate' action")
+        self.cb_show_about = QCheckBox("Show 'About' action")
+
+        group_layout.addWidget(self.cb_show_settings)
+        group_layout.addWidget(self.cb_show_update)
+        group_layout.addWidget(self.cb_show_report)
+        group_layout.addWidget(self.cb_show_donate)
+        group_layout.addWidget(self.cb_show_about)
+
+        layout.addWidget(group)
+        layout.addSpacing(15)
+
+        self.restart_label = QLabel(
+            "<b>Note:</b> Changes to toolbar visibility require an application restart to take effect."
+        )
+        self.restart_label.setWordWrap(True)
+        self.restart_label.setStyleSheet("background-color: #333; border: 1px solid #444; padding: 5px;")
+        layout.addWidget(self.restart_label)
+
+        layout.addStretch()
+
+        # Connections
+        self.cb_show_settings.toggled.connect(lambda checked: self._on_setting_changed("toolbar_show_settings", checked))
+        self.cb_show_update.toggled.connect(lambda checked: self._on_setting_changed("toolbar_show_update", checked))
+        self.cb_show_report.toggled.connect(lambda checked: self._on_setting_changed("toolbar_show_report", checked))
+        self.cb_show_donate.toggled.connect(lambda checked: self._on_setting_changed("toolbar_show_donate", checked))
+        self.cb_show_about.toggled.connect(lambda checked: self._on_setting_changed("toolbar_show_about", checked))
+
+    def _load_settings(self):
+        self.cb_show_settings.setChecked(self.settings_manager.get_setting("toolbar_show_settings", "true") == "true")
+        self.cb_show_update.setChecked(self.settings_manager.get_setting("toolbar_show_update", "true") == "true")
+        self.cb_show_report.setChecked(self.settings_manager.get_setting("toolbar_show_report", "true") == "true")
+        self.cb_show_donate.setChecked(self.settings_manager.get_setting("toolbar_show_donate", "true") == "true")
+        self.cb_show_about.setChecked(self.settings_manager.get_setting("toolbar_show_about", "true") == "true")
+
+    def _on_setting_changed(self, key, checked):
+        """Saves the setting. A restart is required for changes to take effect."""
+        self.settings_manager.set_setting(key, "true" if checked else "false")
+
 
 class SettingsPage(QWidget):
     back_requested = pyqtSignal()
@@ -285,16 +386,20 @@ class SettingsPage(QWidget):
     SECTION_GENERAL = 0
     SECTION_INSTALLATION = 1
     SECTION_SECURITY = 2
+    # restart_requested = pyqtSignal() # No longer needed.
+    SECTION_TOOLBAR = 3
+    SECTION_DONATE = 4
+    SECTION_REPORT = 5
 
     def __init__(self, parent=None):
         super().__init__(parent)
         self.settings_manager = SettingsManager()
         self._init_ui()
-        
+
     def _init_ui(self):
         main_layout = QVBoxLayout(self)
         main_layout.setContentsMargins(15, 15, 15, 15)
-        
+
         # Title
         title = QLabel("Application Settings")
         font = title.font()
@@ -303,43 +408,54 @@ class SettingsPage(QWidget):
         title.setFont(font)
         main_layout.addWidget(title)
         main_layout.addSpacing(15)
-        
+
         # Content Area (Sidebar + Stacked Widgets)
         content_layout = QHBoxLayout()
-        
+
         # 1. Navigation List (Sidebar)
         self.nav_list = QListWidget()
         self.nav_list.setMaximumWidth(180)
         self.nav_list.setMinimumWidth(150)
-        self.nav_list.setFrameShape(QListWidget.NoFrame)
-        
+
         item_general = QListWidgetItem(QIcon.fromTheme("preferences-system"), "General")
         self.nav_list.addItem(item_general)
         item_installation = QListWidgetItem(QIcon.fromTheme("system-software-install"), "Installation")
         self.nav_list.addItem(item_installation)
         item_security = QListWidgetItem(QIcon.fromTheme("dialog-password"), "Security")
         self.nav_list.addItem(item_security)
-        
+        item_toolbar = QListWidgetItem(QIcon.fromTheme("preferences-desktop-display"), "Toolbar")
+        self.nav_list.addItem(item_toolbar)
+        item_donate = QListWidgetItem(QIcon.fromTheme("help-donate"), "Donate")
+        self.nav_list.addItem(item_donate)
+        item_report = QListWidgetItem(QIcon.fromTheme("tools-report-bug"), "Report a Bug")
+        self.nav_list.addItem(item_report)
+
         self.nav_list.setCurrentRow(0) # Default to General
         content_layout.addWidget(self.nav_list)
-        
+
         # 2. Settings Stack
         self.settings_stack = QStackedWidget()
-        
+
         # Initialize section widgets
         self.general_widget = GeneralSettingsWidget(self.settings_manager)
         self.installation_widget = InstallationSettingsWidget(self.settings_manager)
         self.security_widget = SecuritySettingsWidget(self.settings_manager)
-        
+        self.toolbar_widget = ToolbarSettingsWidget(self.settings_manager)
+        self.donation_page = DonationPage()
+        self.report_page = ReportPage()
+
         self.settings_stack.addWidget(self.general_widget)
         self.settings_stack.addWidget(self.installation_widget)
         self.settings_stack.addWidget(self.security_widget)
-        
+        self.settings_stack.addWidget(self.toolbar_widget)
+        self.settings_stack.addWidget(self.donation_page)
+        self.settings_stack.addWidget(self.report_page)
+
         content_layout.addWidget(self.settings_stack)
-        
+
         main_layout.addLayout(content_layout)
         main_layout.addStretch()
-        
+
         # --- Bottom Buttons ---
         button_layout = QHBoxLayout()
         button_layout.addStretch()

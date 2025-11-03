@@ -12,8 +12,6 @@ from PyQt5.QtWidgets import (
 )
 
 class DonationPage(QWidget):
-    back_requested = pyqtSignal()
-
     def __init__(self, parent=None):
         super().__init__(parent)
         self._init_ui()
@@ -53,37 +51,39 @@ class DonationPage(QWidget):
         donation_layout.setAlignment(Qt.AlignTop)
 
         # GPay Donation Option
+        # Use a QHBoxLayout with spacers to center the content horizontally
+        centering_layout = QHBoxLayout()
+        centering_layout.addStretch()
+
         gpay_group = QGroupBox("GPay / UPI Donation")
+        gpay_group.setFixedWidth(300) # Give the group box a fixed width for better centering
         gpay_layout = QVBoxLayout(gpay_group)
-        gpay_layout.setAlignment(Qt.AlignCenter)
         
         gpay_label = QLabel("Scan the QR code below to donate via GPay or any UPI app:")
         gpay_label.setAlignment(Qt.AlignCenter)
+        gpay_label.setWordWrap(True)
         gpay_layout.addWidget(gpay_label)
         
         # Load and display QR code image
         qr_code_label = QLabel()
-        pixmap = QPixmap("assets/gpay.jpg")
+        # Use absolute path for installed asset
+        asset_path = "/usr/share/nano-installer/assets/gpay.jpg"
+        pixmap = QPixmap(asset_path)
         if not pixmap.isNull():
-            # Scale pixmap down if necessary, assuming a reasonable size for a QR code
-            scaled_pixmap = pixmap.scaled(250, 250, Qt.KeepAspectRatio, Qt.SmoothTransformation)
+            # Scale pixmap to a fixed size for a clean look
+            scaled_pixmap = pixmap.scaled(200, 200, Qt.KeepAspectRatio, Qt.SmoothTransformation)
+            qr_code_label.setFixedSize(200, 200)
             qr_code_label.setPixmap(scaled_pixmap)
             qr_code_label.setAlignment(Qt.AlignCenter)
             gpay_layout.addWidget(qr_code_label)
         else:
-            gpay_layout.addWidget(QLabel("Error: GPay QR code image not found at assets/gpay.jpg"))
+            gpay_layout.addWidget(QLabel(f"Error: GPay QR code image not found at {asset_path}"))
             
-        donation_layout.addWidget(gpay_group)
+        centering_layout.addWidget(gpay_group)
+        centering_layout.addStretch()
+        donation_layout.addLayout(centering_layout)
         
         scroll_area.setWidget(scroll_content)
         main_layout.addWidget(scroll_area)
 
-        # --- Bottom Buttons ---
-        button_layout = QHBoxLayout()
-        button_layout.addStretch()
-        self.btn_back = QPushButton(QIcon.fromTheme("go-previous", QIcon.fromTheme("arrow-left")), "Back")
-        button_layout.addWidget(self.btn_back)
-        main_layout.addLayout(button_layout)
-
-        # --- Connections ---
-        self.btn_back.clicked.connect(self.back_requested.emit)
+        main_layout.addStretch()

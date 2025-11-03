@@ -326,68 +326,27 @@ class DependencyPopup(QDialog):
 # Offline installer tab
 # -----------------------
 class OfflinePage(QWidget):
-    # Signal now carries the desired section index (int)
-    settings_requested = pyqtSignal(int)
-    update_requested = pyqtSignal()
-    about_requested = pyqtSignal()
+    # Signals are no longer needed here; they are handled by the MainWindow's toolbar.
 
     def __init__(self):
         super().__init__()
         layout = QVBoxLayout(self)
 
         # A single button to select a .deb file
-        self.btn_select_deb = QPushButton(QIcon.fromTheme("document-open", QIcon.fromTheme("folder-open")), " Select .deb Package to Install...")
-        
-        # Replace settings button with a menu button
-        self.btn_settings_menu = QToolButton()
-        self.btn_settings_menu.setIcon(QIcon.fromTheme("preferences-system"))
-        self.btn_settings_menu.setText("Menu")
-        self.btn_settings_menu.setPopupMode(QToolButton.InstantPopup)
-        self.btn_settings_menu.setToolButtonStyle(Qt.ToolButtonTextBesideIcon)
-        
-        # Create the menu
-        settings_menu = QMenu(self)
-        
-        # Import constants from settings.py for section indices
-        from .settings import SettingsPage
-        
-        self.action_general = settings_menu.addAction(QIcon.fromTheme("preferences-system"), "General Settings")
-        self.action_installation = settings_menu.addAction(QIcon.fromTheme("system-software-install"), "Installation Behavior")
-        self.action_security = settings_menu.addAction(QIcon.fromTheme("dialog-password"), "Security & Authentication")
-        
-        settings_menu.addSeparator()
-        
-        self.action_update = settings_menu.addAction(QIcon.fromTheme("system-software-update"), "Self Update")
-        self.action_about = settings_menu.addAction(QIcon.fromTheme("help-about"), "About")
-        
-        self.btn_settings_menu.setMenu(settings_menu)
+        self.btn_select_deb = QPushButton(QIcon.fromTheme("document-open", QIcon.fromTheme("folder-open")), " Select .deb Package...")
+        self.btn_select_deb.setMinimumHeight(50) # Make the button more prominent
 
         button_layout = QHBoxLayout()
         button_layout.addStretch()
         button_layout.addWidget(self.btn_select_deb)
         button_layout.addStretch()
 
-        # Top right settings menu button
-        top_layout = QHBoxLayout()
-        top_layout.addStretch()
-        top_layout.addWidget(self.btn_settings_menu)
-
-        layout.addLayout(top_layout)
         layout.addStretch(1)
         layout.addLayout(button_layout)
         layout.addStretch(1)
 
         # Signals
         self.btn_select_deb.clicked.connect(self.on_select_deb)
-        
-        # Connect menu actions to a unified signal emission
-        self.action_general.triggered.connect(lambda: self.settings_requested.emit(SettingsPage.SECTION_GENERAL))
-        self.action_installation.triggered.connect(lambda: self.settings_requested.emit(SettingsPage.SECTION_INSTALLATION))
-        self.action_security.triggered.connect(lambda: self.settings_requested.emit(SettingsPage.SECTION_SECURITY))
-        
-        # Connect new actions
-        self.action_update.triggered.connect(self.update_requested.emit)
-        self.action_about.triggered.connect(self.about_requested.emit)
 
     def on_select_deb(self):
         dialog = QFileDialog(self)

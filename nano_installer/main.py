@@ -8,7 +8,7 @@ import subprocess
 if __name__ == "__main__":
     sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from PyQt5.QtCore import Qt
+from PyQt5.QtCore import Qt, QProcess
 from PyQt5.QtGui import QIcon
 from PyQt5.QtWidgets import (
     QApplication,
@@ -16,6 +16,7 @@ from PyQt5.QtWidgets import (
     QStackedWidget,
     QWidget,
     QVBoxLayout,
+    QSizePolicy,
     QMainWindow,
     QAction,
 )
@@ -24,8 +25,10 @@ from PyQt5.QtWidgets import (
 from nano_installer.settings import SettingsManager, SettingsPage
 from nano_installer.gui_components import OfflinePage
 from nano_installer.wizards import InstallWizard, UninstallWizard
+from nano_installer.donation_page import DonationPage
+from nano_installer.report_page import ReportPage
 from nano_installer.utils import get_deb_info, get_installed_version, compare_versions, is_critical_package
-from nano_installer.constants import APP_NAME, BACKEND_PATH
+from nano_installer.constants import APP_NAME, VERSION, BACKEND_PATH
 from nano_installer.self_update import check_for_updates
 
 # -----------------------
@@ -118,7 +121,12 @@ class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
         self.setWindowTitle(f"{APP_NAME}")
-        self.setWindowIcon(QIcon.fromTheme("system-software-install"))
+        # Use absolute path for installed icon
+        icon_path = "/usr/share/nano-installer/assets/nano-installer.png"
+        if Path(icon_path).exists():
+            self.setWindowIcon(QIcon(icon_path))
+        else:
+            self.setWindowIcon(QIcon.fromTheme("system-software-install"))
         self.setFixedSize(550, 450)
 
         # Central widget setup
@@ -126,8 +134,9 @@ class MainWindow(QMainWindow):
         self.setCentralWidget(central_widget)
         
         self.stack = QStackedWidget(central_widget)
+        self.settings_manager = SettingsManager() # Get a settings manager instance
         self.offline_page = OfflinePage()
-        self.settings_page = SettingsPage()
+        self.settings_page = SettingsPage() # This page now contains the donation and report pages
 
         self.stack.addWidget(self.offline_page)
         self.stack.addWidget(self.settings_page)
@@ -136,16 +145,58 @@ class MainWindow(QMainWindow):
         layout.setContentsMargins(0, 0, 0, 0)
         layout.addWidget(self.stack)
 
+        self._setup_toolbar()
+
         # self._setup_menu_bar() # Menu bar removed per user request
 
         # Connect signals for page navigation (kept for internal page buttons/links)
         # The settings_requested signal now carries the desired section index (int)
-        self.offline_page.settings_requested.connect(self._show_settings_page)
+        # self.offline_page.settings_requested.connect(self._show_settings_page) # This signal was moved to the toolbar
         self.settings_page.back_requested.connect(lambda: self.stack.setCurrentWidget(self.offline_page))
-        
-        # Connect new menu actions from OfflinePage
-        self.offline_page.update_requested.connect(self._show_update_placeholder)
-        self.offline_page.about_requested.connect(lambda: show_about_dialog(self))
+
+    def _setup_toolbar(self):
+        """Creates and configures the main application toolbar."""
+        toolbar = self.addToolBar("Main Toolbar")
+        toolbar.setMovable(False)
+        toolbar.setIconSize(QIcon("").actualSize(toolbar.iconSize())) # Use standard icon sizes
+
+        # Read settings to decide which actions to show. Default to "true" if not set.
+        if self.settings_manager.get_setting("toolbar_show_settings", "true") == "true":
+            settings_action = QAction(QIcon.fromTheme("preferences-system"), "Settings", self)
+            settings_action.triggered.connect(lambda: self._show_settings_page())
+            toolbar.addAction(settings_action)
+
+        if self.settings_manager.get_setting("toolbar_show_update", "true") == "true":
+            update_action = QAction(QIcon.fromTheme("system-software-update"), "Check for Updates", self)
+            update_action.triggered.connect(self._show_update_placeholder)
+            toolbar.addAction(update_action)
+
+        # Add a separator if any of the first group of actions were added and any of the second group will be
+        if (self.settings_manager.get_setting("toolbar_show_settings", "true") == "true" or \
+            self.settings_manager.get_setting("toolbar_show_update", "true") == "true") and \
+           (self.settings_manager.get_setting("toolbar_show_report", "true") == "true" or \
+            self.settings_manager.get_setting("toolbar_show_donate", "true") == "true"):
+            toolbar.addSeparator()
+
+        if self.settings_manager.get_setting("toolbar_show_report", "true") == "true":
+            report_action = QAction(QIcon.fromTheme("tools-report-bug"), "Report a Bug", self)
+            report_action.triggered.connect(lambda: self._show_settings_page(SettingsPage.SECTION_REPORT))
+            toolbar.addAction(report_action)
+
+        if self.settings_manager.get_setting("toolbar_show_donate", "true") == "true":
+            donate_action = QAction(QIcon.fromTheme("help-donate"), "Donate", self)
+            donate_action.triggered.connect(lambda: self._show_settings_page(SettingsPage.SECTION_DONATE))
+            toolbar.addAction(donate_action)
+
+        # Add a spacer to push the about button to the right
+        spacer = QWidget()
+        spacer.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
+        toolbar.addWidget(spacer)
+
+        if self.settings_manager.get_setting("toolbar_show_about", "true") == "true":
+            about_action = QAction(QIcon.fromTheme("help-about"), "About", self)
+            about_action.triggered.connect(lambda: show_about_dialog(self))
+            toolbar.addAction(about_action)
 
     def _show_settings_page(self, section_index: int = SettingsPage.SECTION_GENERAL):
         """Switches to the settings page and sets the active section."""
@@ -174,7 +225,7 @@ def show_about_dialog(parent=None):
         from PyQt5.QtWidgets import QMessageBox
         about_text = f"""
 <h2>{APP_NAME}</h2>
-<p><b>Version:</b> 1.0.4</p>
+<p><b>Version:</b> {VERSION}</p>
 <p><b>Advanced .deb Package Installer with KDE Integration</b></p>
 <p>Features:</p>
 <ul>
@@ -191,15 +242,28 @@ def show_about_dialog(parent=None):
         msg_box.setWindowTitle(f"About {APP_NAME}")
         msg_box.setTextFormat(Qt.RichText)
         msg_box.setText(about_text)
-        msg_box.setIconPixmap(QIcon.fromTheme("system-software-install").pixmap(64, 64))
+        # Use absolute path for installed icon
+        icon_path = "/usr/share/nano-installer/assets/nano-installer.png"
+        if Path(icon_path).exists():
+            msg_box.setIconPixmap(QIcon(icon_path).pixmap(64, 64))
+        else:
+            msg_box.setIconPixmap(QIcon.fromTheme("system-software-install").pixmap(64, 64))
         msg_box.exec_()
         
     except Exception:
         # Fallback to kdialog
         subprocess.run([
             'kdialog', '--title', f'About {APP_NAME}',
-            '--msgbox', f'{APP_NAME} v1.0.4\nAdvanced .deb Package Installer'
+            '--msgbox', f'{APP_NAME} v{VERSION}\nAdvanced .deb Package Installer'
         ], capture_output=True)
+
+def set_kde_icon_name(app):
+    """
+    On KDE, the window icon might not be used for the task manager.
+    Instead, the icon from the .desktop file is used. We need to tell
+    the application the name of its desktop file.
+    """
+    app.setDesktopFileName(f'nano-installer.desktop')
 
 def main():
     # Set appropriate platform theme for better desktop integration
@@ -220,6 +284,10 @@ def main():
     args = handle_command_line_args()
     
     app = QApplication(sys.argv)
+
+    # Set the desktop file name for better KDE integration
+    if "kde" in desktop_env or "plasma" in desktop_env:
+        set_kde_icon_name(app)
 
     # Handle special command-line actions
     if args.about:

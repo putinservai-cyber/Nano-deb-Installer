@@ -13,8 +13,6 @@ from PyQt5.QtWidgets import (
 )
 
 class ReportPage(QWidget):
-    back_requested = pyqtSignal()
-
     def __init__(self, parent=None):
         super().__init__(parent)
         self._init_ui()
@@ -55,13 +53,5 @@ class ReportPage(QWidget):
         
         main_layout.addStretch()
 
-        # --- Bottom Buttons ---
-        button_layout = QHBoxLayout()
-        button_layout.addStretch()
-        self.btn_back = QPushButton(QIcon.fromTheme("go-previous", QIcon.fromTheme("arrow-left")), "Back")
-        button_layout.addWidget(self.btn_back)
-        main_layout.addLayout(button_layout)
-
         # --- Connections ---
-        self.btn_back.clicked.connect(self.back_requested.emit)
         self.btn_github.clicked.connect(lambda: webbrowser.open(constants.REPORT_ISSUES_URL))
