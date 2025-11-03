@@ -10,3 +10,7 @@ $(TARGET): $(SOURCE)
 
 clean:
 	rm -f $(TARGET)
+
+install: $(TARGET)
+	install -d $(DESTDIR)/usr/bin
+	install -m 755 $(TARGET) $(DESTDIR)/usr/bin/

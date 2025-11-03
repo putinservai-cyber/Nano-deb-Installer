@@ -1,0 +1,21 @@
+#!/usr/bin/make -f
+
+# Uncomment this to turn on verbose output during the process
+# export DH_VERBOSE=1
+
+# Set the compatibility level
+export DH_COMPAT=13
+
+# Define the build system
+# Since this is a Python application, we use dh_python3
+# We don't need to override any targets for a simple application
+# that uses debhelper sequence.
+
+%:
+	dh $@ --with python3
+
+override_dh_auto_install:
+	# Run the custom install target in Makefile to install nano_backend
+	# into the staging directory, respecting DESTDIR.
+	$(MAKE) install DESTDIR=$$(pwd)/debian/nano-installer
+	# dh_auto_install is skipped, relying on dh_install for the rest of the files.

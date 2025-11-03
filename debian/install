@@ -1,0 +1,4 @@
+nano-installer.py /usr/bin/nano-installer
+nano_installer/* /usr/lib/nano-installer/nano_installer/
+assets/nano-installer.png /usr/share/icons/hicolor/scalable/apps/
+debian/nano-installer.desktop /usr/share/applications/
