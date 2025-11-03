@@ -2,6 +2,7 @@
 __pycache__/
 *.py[cod]
 *$py.class
+*.log
 
 # C extensions
 *.so
@@ -32,4 +33,6 @@ env/
 Thumbs.db
 
 # Nano Installer specific
+nano_installer/config.py
+nano_installer/security.py
 nano_backend # Compiled C executable
