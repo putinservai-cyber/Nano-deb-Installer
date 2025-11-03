@@ -1,0 +1,12 @@
+CC = gcc
+CFLAGS = -Wall -Wextra -O2
+TARGET = nano_backend
+SOURCE = src/nano_backend.c
+
+all: $(TARGET)
+
+$(TARGET): $(SOURCE)
+	$(CC) $(CFLAGS) $(SOURCE) -o $(TARGET)
+
+clean:
+	rm -f $(TARGET)
