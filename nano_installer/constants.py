@@ -4,3 +4,4 @@ from pathlib import Path
 APP_NAME = "Nano Installer"
 # Path to the compiled C backend executable (relative to the project root)
 BACKEND_PATH = str(Path(__file__).parent.parent / "nano_backend")
+REPORT_ISSUES_URL = "https://github.com/putinservai-cyber/Nano-deb-Installer/issues"
