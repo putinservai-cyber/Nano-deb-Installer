@@ -263,25 +263,28 @@ def is_critical_package(pkg_name: str) -> tuple[bool, str]:
     return False, ""
 
 def get_nano_installer_package_name() -> str:
-    """Attempts to determine the package name of nano-installer if installed as .deb."""
+    """
+    Attempts to determine the package name of nano-installer if installed as a .deb.
+    Returns an empty string if not found.
+    """
     try:
         # Get the path of the current script
-        script_path = Path(__file__).resolve()
-        
+        # In a packaged app, this might be in /usr/lib/python3/dist-packages/nano_installer/
+        script_path = Path(os.path.abspath(sys.argv[0]))
+
         # Try to find which package owns this file
-        result = subprocess.run(['dpkg', '-S', str(script_path)], 
-                              capture_output=True, text=True)
+        result = subprocess.run(['dpkg', '-S', str(script_path)],
+                                capture_output=True, text=True, check=False)
         if result.returncode == 0:
             # Extract package name from output like "package-name: /path/to/file"
-            package_line = result.stdout.strip().split(':')[0]
-            return package_line.strip()
+            return result.stdout.strip().split(':')[0]
     except Exception:
         pass
-    
+
     # Fallback: common names for nano-installer
     possible_names = ['nano-installer', 'nano-installer-kde', 'nano-installer-plasma']
     for name in possible_names:
         if get_installed_version(name):
             return name
-    
+
     return ""

@@ -1,4 +1,5 @@
-nano-installer.py /usr/bin/nano-installer
+nano-installer.py /usr/lib/nano-installer/
 nano_installer/* /usr/lib/nano-installer/nano_installer/
-assets/nano-installer.png /usr/share/icons/hicolor/scalable/apps/
+assets/nano-installer.png /usr/share/nano-installer/assets/
+assets/gpay.jpg /usr/share/nano-installer/assets/
 debian/nano-installer.desktop /usr/share/applications/

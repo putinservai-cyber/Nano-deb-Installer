@@ -22,8 +22,8 @@ from PyQt5.QtWidgets import (
 
 # Import AuthenticationDialog from gui_components (will be created next)
 from .gui_components import AuthenticationDialog
-from .donation_page import DonationPage
-from .report_page import ReportPage
+from .donation_page import DonationPage # Keep for instantiation
+from .report_page import ReportPage # Keep for instantiation
 
 class SettingsManager:
     def __init__(self):
@@ -317,67 +317,6 @@ class SecuritySettingsWidget(QWidget):
             self.settings_manager.set_setting("auto_password_enabled", "false")
             QMessageBox.information(self, "Password Cleared", "Automatic password entry has been disabled and the saved password has been cleared.")
 
-class ToolbarSettingsWidget(QWidget):
-    # restart_requested = pyqtSignal() # No longer needed, restart is not prompted.
-
-    def __init__(self, settings_manager, parent=None):
-        super().__init__(parent)
-        self.settings_manager = settings_manager
-        self._init_ui()
-        self._load_settings()
-
-    def _init_ui(self):
-        layout = QVBoxLayout(self)
-        layout.setAlignment(Qt.AlignTop)
-        layout.setContentsMargins(0, 0, 0, 0)
-
-        group = QGroupBox("Toolbar Actions")
-        group_layout = QVBoxLayout(group)
-
-        group_layout.addWidget(QLabel("Select which actions to display on the main toolbar."))
-
-        self.cb_show_settings = QCheckBox("Show 'Settings' action")
-        self.cb_show_update = QCheckBox("Show 'Check for Updates' action")
-        self.cb_show_report = QCheckBox("Show 'Report a Bug' action")
-        self.cb_show_donate = QCheckBox("Show 'Donate' action")
-        self.cb_show_about = QCheckBox("Show 'About' action")
-
-        group_layout.addWidget(self.cb_show_settings)
-        group_layout.addWidget(self.cb_show_update)
-        group_layout.addWidget(self.cb_show_report)
-        group_layout.addWidget(self.cb_show_donate)
-        group_layout.addWidget(self.cb_show_about)
-
-        layout.addWidget(group)
-        layout.addSpacing(15)
-
-        self.restart_label = QLabel(
-            "<b>Note:</b> Changes to toolbar visibility require an application restart to take effect."
-        )
-        self.restart_label.setWordWrap(True)
-        self.restart_label.setStyleSheet("background-color: #333; border: 1px solid #444; padding: 5px;")
-        layout.addWidget(self.restart_label)
-
-        layout.addStretch()
-
-        # Connections
-        self.cb_show_settings.toggled.connect(lambda checked: self._on_setting_changed("toolbar_show_settings", checked))
-        self.cb_show_update.toggled.connect(lambda checked: self._on_setting_changed("toolbar_show_update", checked))
-        self.cb_show_report.toggled.connect(lambda checked: self._on_setting_changed("toolbar_show_report", checked))
-        self.cb_show_donate.toggled.connect(lambda checked: self._on_setting_changed("toolbar_show_donate", checked))
-        self.cb_show_about.toggled.connect(lambda checked: self._on_setting_changed("toolbar_show_about", checked))
-
-    def _load_settings(self):
-        self.cb_show_settings.setChecked(self.settings_manager.get_setting("toolbar_show_settings", "true") == "true")
-        self.cb_show_update.setChecked(self.settings_manager.get_setting("toolbar_show_update", "true") == "true")
-        self.cb_show_report.setChecked(self.settings_manager.get_setting("toolbar_show_report", "true") == "true")
-        self.cb_show_donate.setChecked(self.settings_manager.get_setting("toolbar_show_donate", "true") == "true")
-        self.cb_show_about.setChecked(self.settings_manager.get_setting("toolbar_show_about", "true") == "true")
-
-    def _on_setting_changed(self, key, checked):
-        """Saves the setting. A restart is required for changes to take effect."""
-        self.settings_manager.set_setting(key, "true" if checked else "false")
-
 
 class SettingsPage(QWidget):
     back_requested = pyqtSignal()
@@ -386,10 +325,8 @@ class SettingsPage(QWidget):
     SECTION_GENERAL = 0
     SECTION_INSTALLATION = 1
     SECTION_SECURITY = 2
-    # restart_requested = pyqtSignal() # No longer needed.
-    SECTION_TOOLBAR = 3
-    SECTION_DONATE = 4
-    SECTION_REPORT = 5
+    SECTION_DONATE = 3
+    SECTION_REPORT = 4
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -408,7 +345,7 @@ class SettingsPage(QWidget):
         title.setFont(font)
         main_layout.addWidget(title)
         main_layout.addSpacing(15)
-
+        
         # Content Area (Sidebar + Stacked Widgets)
         content_layout = QHBoxLayout()
 
@@ -423,8 +360,6 @@ class SettingsPage(QWidget):
         self.nav_list.addItem(item_installation)
         item_security = QListWidgetItem(QIcon.fromTheme("dialog-password"), "Security")
         self.nav_list.addItem(item_security)
-        item_toolbar = QListWidgetItem(QIcon.fromTheme("preferences-desktop-display"), "Toolbar")
-        self.nav_list.addItem(item_toolbar)
         item_donate = QListWidgetItem(QIcon.fromTheme("help-donate"), "Donate")
         self.nav_list.addItem(item_donate)
         item_report = QListWidgetItem(QIcon.fromTheme("tools-report-bug"), "Report a Bug")
@@ -440,14 +375,12 @@ class SettingsPage(QWidget):
         self.general_widget = GeneralSettingsWidget(self.settings_manager)
         self.installation_widget = InstallationSettingsWidget(self.settings_manager)
         self.security_widget = SecuritySettingsWidget(self.settings_manager)
-        self.toolbar_widget = ToolbarSettingsWidget(self.settings_manager)
         self.donation_page = DonationPage()
         self.report_page = ReportPage()
 
         self.settings_stack.addWidget(self.general_widget)
         self.settings_stack.addWidget(self.installation_widget)
         self.settings_stack.addWidget(self.security_widget)
-        self.settings_stack.addWidget(self.toolbar_widget)
         self.settings_stack.addWidget(self.donation_page)
         self.settings_stack.addWidget(self.report_page)
 

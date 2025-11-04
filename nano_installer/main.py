@@ -27,7 +27,7 @@ from nano_installer.gui_components import OfflinePage
 from nano_installer.wizards import InstallWizard, UninstallWizard
 from nano_installer.donation_page import DonationPage
 from nano_installer.report_page import ReportPage
-from nano_installer.utils import get_deb_info, get_installed_version, compare_versions, is_critical_package
+from nano_installer.utils import get_deb_info, get_installed_version, compare_versions, is_critical_package, get_nano_installer_package_name
 from nano_installer.constants import APP_NAME, VERSION, BACKEND_PATH
 from nano_installer.self_update import check_for_updates
 
@@ -160,43 +160,33 @@ class MainWindow(QMainWindow):
         toolbar.setMovable(False)
         toolbar.setIconSize(QIcon("").actualSize(toolbar.iconSize())) # Use standard icon sizes
 
-        # Read settings to decide which actions to show. Default to "true" if not set.
-        if self.settings_manager.get_setting("toolbar_show_settings", "true") == "true":
-            settings_action = QAction(QIcon.fromTheme("preferences-system"), "Settings", self)
-            settings_action.triggered.connect(lambda: self._show_settings_page())
-            toolbar.addAction(settings_action)
+        # Actions are no longer customizable, they are always shown.
+        settings_action = QAction(QIcon.fromTheme("preferences-system"), "Settings", self)
+        settings_action.triggered.connect(lambda: self._show_settings_page())
+        toolbar.addAction(settings_action)
 
-        if self.settings_manager.get_setting("toolbar_show_update", "true") == "true":
-            update_action = QAction(QIcon.fromTheme("system-software-update"), "Check for Updates", self)
-            update_action.triggered.connect(self._show_update_placeholder)
-            toolbar.addAction(update_action)
+        update_action = QAction(QIcon.fromTheme("system-software-update"), "Check for Updates", self)
+        update_action.triggered.connect(self._show_update_placeholder)
+        toolbar.addAction(update_action)
 
-        # Add a separator if any of the first group of actions were added and any of the second group will be
-        if (self.settings_manager.get_setting("toolbar_show_settings", "true") == "true" or \
-            self.settings_manager.get_setting("toolbar_show_update", "true") == "true") and \
-           (self.settings_manager.get_setting("toolbar_show_report", "true") == "true" or \
-            self.settings_manager.get_setting("toolbar_show_donate", "true") == "true"):
-            toolbar.addSeparator()
+        toolbar.addSeparator()
 
-        if self.settings_manager.get_setting("toolbar_show_report", "true") == "true":
-            report_action = QAction(QIcon.fromTheme("tools-report-bug"), "Report a Bug", self)
-            report_action.triggered.connect(lambda: self._show_settings_page(SettingsPage.SECTION_REPORT))
-            toolbar.addAction(report_action)
+        report_action = QAction(QIcon.fromTheme("tools-report-bug"), "Report a Bug", self)
+        report_action.triggered.connect(lambda: self._show_settings_page(SettingsPage.SECTION_REPORT))
+        toolbar.addAction(report_action)
 
-        if self.settings_manager.get_setting("toolbar_show_donate", "true") == "true":
-            donate_action = QAction(QIcon.fromTheme("help-donate"), "Donate", self)
-            donate_action.triggered.connect(lambda: self._show_settings_page(SettingsPage.SECTION_DONATE))
-            toolbar.addAction(donate_action)
+        donate_action = QAction(QIcon.fromTheme("help-donate"), "Donate", self)
+        donate_action.triggered.connect(lambda: self._show_settings_page(SettingsPage.SECTION_DONATE))
+        toolbar.addAction(donate_action)
 
         # Add a spacer to push the about button to the right
         spacer = QWidget()
         spacer.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
         toolbar.addWidget(spacer)
 
-        if self.settings_manager.get_setting("toolbar_show_about", "true") == "true":
-            about_action = QAction(QIcon.fromTheme("help-about"), "About", self)
-            about_action.triggered.connect(lambda: show_about_dialog(self))
-            toolbar.addAction(about_action)
+        about_action = QAction(QIcon.fromTheme("help-about"), "About", self)
+        about_action.triggered.connect(lambda: show_about_dialog(self))
+        toolbar.addAction(about_action)
 
     def _show_settings_page(self, section_index: int = SettingsPage.SECTION_GENERAL):
         """Switches to the settings page and sets the active section."""
