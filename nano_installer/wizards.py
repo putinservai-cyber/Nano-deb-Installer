@@ -43,7 +43,7 @@ from nano_installer.utils import (
 )
 from nano_installer.security import scan_with_virustotal, calculate_file_hash
 from nano_installer.gui_components import AuthenticationDialog, DependencyPopup
-from nano_installer.constants import APP_NAME, BACKEND_PATH # APP_NAME and BACKEND_PATH are defined in constants.py
+from nano_installer.constants import APP_NAME, get_backend_path # APP_NAME and get_backend_path are defined in constants.py
 
 # -----------------------
 # Base Wizard for common operations
@@ -592,7 +592,7 @@ class InstallWizard(BaseOperationWizard):
                 # apt handles dependencies automatically, simplifying the Python worker.
                 if worker: worker.progress.emit({"type": "log", "line": "\n--- Starting package installation via C backend ---\n"})
                 
-                cmd = ["sudo", "-S", BACKEND_PATH, "apt-op", "install", str(self.deb_path)]
+                cmd = ["sudo", "-S", get_backend_path(), "apt-op", "install", str(self.deb_path)]
                 if self.is_reinstall:
                     cmd.append("--reinstall")
 
@@ -1694,7 +1694,7 @@ class UninstallWizard(BaseOperationWizard):
                 if worker: worker.progress.emit({"type": "log", "line": "\n--- Starting package removal via C backend ---\n"})
                 
                 # Use apt remove with purge option for complete removal via C backend
-                cmd = ["sudo", "-S", BACKEND_PATH, "apt-op", "purge", self.pkg_name]
+                cmd = ["sudo", "-S", get_backend_path(), "apt-op", "purge", self.pkg_name]
                 output_lines = []
                 proc = subprocess.Popen(cmd, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, bufsize=1, encoding='utf-8')
                 proc.stdin.write(password + '\n')
@@ -1713,7 +1713,7 @@ class UninstallWizard(BaseOperationWizard):
                 
                 # Clean up orphaned dependencies via C backend
                 if worker: worker.progress.emit({"type": "log", "line": "\n--- Cleaning up orphaned dependencies ---\n"})
-                cleanup_cmd = ["sudo", "-S", BACKEND_PATH, "apt", "autoremove", "-y"]
+                cleanup_cmd = ["sudo", "-S", get_backend_path(), "apt", "autoremove", "-y"]
                 cleanup_proc = subprocess.Popen(cleanup_cmd, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, bufsize=1)
                 cleanup_proc.stdin.write(password + '\n')
                 cleanup_proc.stdin.close()
