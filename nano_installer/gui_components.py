@@ -21,7 +21,8 @@ from PyQt5.QtWidgets import (
 from pathlib import Path
 
 # Imports from other modules (to be created/moved)
-# No imports from .main needed at top level
+from .constants import APP_ICON_PATH_SOURCE # Import for local icon fallback
+from .utils import get_icon # Import the helper function
 
 # -----------------------
 # Enhanced Authentication Dialog
@@ -333,7 +334,7 @@ class OfflinePage(QWidget):
         layout = QVBoxLayout(self)
 
         # A single button to select a .deb file
-        self.btn_select_deb = QPushButton(QIcon.fromTheme("document-open", QIcon.fromTheme("folder-open")), " Select .deb Package...")
+        self.btn_select_deb = QPushButton(get_icon("document-open", APP_ICON_PATH_SOURCE), " Select .deb Package...")
         self.btn_select_deb.setMinimumHeight(50) # Make the button more prominent
 
         button_layout = QHBoxLayout()

@@ -10,7 +10,9 @@ from pathlib import Path
 
 # Ensure the package is in the Python path
 # The package is installed to /usr/lib/nano-installer/
-sys.path.insert(0, "/usr/lib/nano-installer/")
+# For development, insert the current directory (project root)
+# For installed version, the path is /usr/lib/nano-installer/
+sys.path.insert(0, str(Path(__file__).parent))
 from nano_installer.main import main # noqa: E402
 
 if __name__ == "__main__":

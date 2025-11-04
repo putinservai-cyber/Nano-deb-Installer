@@ -40,6 +40,29 @@ class WorkerThread(QThread):
 # -----------------------
 # Helper Functions
 # -----------------------
+def get_icon(theme_name: str, fallback_path: str = None) -> QIcon:
+    """
+    Loads an icon from the theme with a fallback to a local file path.
+    This is crucial for cross-platform compatibility (e.g., Windows/macOS).
+    """
+    # 1. Try to load from theme (best for Linux desktop integration)
+    theme_icon = QIcon.fromTheme(theme_name)
+    if not theme_icon.isNull():
+        return theme_icon
+    
+    # 2. Fallback to local file path
+    if fallback_path and Path(fallback_path).exists():
+        return QIcon(fallback_path)
+        
+    # 3. Fallback to a generic theme icon if the first one failed
+    # This is a last resort for systems with poor theme support
+    generic_theme_icon = QIcon.fromTheme("application-x-executable")
+    if not generic_theme_icon.isNull():
+        return generic_theme_icon
+        
+    # 4. Return an empty icon if all else fails
+    return QIcon()
+
 def get_deb_info(deb_path: Path, fields: list = None):
     """Extracts specified fields from a .deb file's control information."""
     if fields is None:

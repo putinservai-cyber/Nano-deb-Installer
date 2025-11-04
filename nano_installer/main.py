@@ -28,8 +28,34 @@ from nano_installer.wizards import InstallWizard, UninstallWizard
 from nano_installer.donation_page import DonationPage
 from nano_installer.report_page import ReportPage
 from nano_installer.utils import get_deb_info, get_installed_version, compare_versions, is_critical_package, get_nano_installer_package_name
-from nano_installer.constants import APP_NAME, VERSION, BACKEND_PATH
+from nano_installer.constants import APP_NAME, VERSION, BACKEND_PATH, APP_ICON_PATH_INSTALLED, APP_ICON_PATH_SOURCE
 from nano_installer.self_update import check_for_updates
+
+# -----------------------
+# Icon Helper
+# -----------------------
+def get_icon(theme_name: str, fallback_path: str = None) -> QIcon:
+    """
+    Loads an icon from the theme with a fallback to a local file path.
+    This is crucial for cross-platform compatibility (e.g., Windows/macOS).
+    """
+    # 1. Try to load from theme (best for Linux desktop integration)
+    theme_icon = QIcon.fromTheme(theme_name)
+    if not theme_icon.isNull():
+        return theme_icon
+    
+    # 2. Fallback to local file path
+    if fallback_path and Path(fallback_path).exists():
+        return QIcon(fallback_path)
+        
+    # 3. Fallback to a generic theme icon if the first one failed
+    # This is a last resort for systems with poor theme support
+    generic_theme_icon = QIcon.fromTheme("application-x-executable")
+    if not generic_theme_icon.isNull():
+        return generic_theme_icon
+        
+    # 4. Return an empty icon if all else fails
+    return QIcon()
 
 # -----------------------
 # Core Logic
@@ -121,11 +147,13 @@ class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
         self.setWindowTitle(f"{APP_NAME}")
-        # Use absolute path for installed icon
-        icon_path = "/usr/share/nano-installer/assets/nano-installer.png"
-        if Path(icon_path).exists():
-            self.setWindowIcon(QIcon(icon_path))
+        # Use installed path first, then source path for the application icon
+        if Path(APP_ICON_PATH_INSTALLED).exists():
+            self.setWindowIcon(QIcon(APP_ICON_PATH_INSTALLED))
+        elif Path(APP_ICON_PATH_SOURCE).exists():
+            self.setWindowIcon(QIcon(APP_ICON_PATH_SOURCE))
         else:
+            # Fallback to theme icon for development/uninstalled environments
             self.setWindowIcon(QIcon.fromTheme("system-software-install"))
         self.setFixedSize(550, 450)
 
@@ -161,21 +189,21 @@ class MainWindow(QMainWindow):
         toolbar.setIconSize(QIcon("").actualSize(toolbar.iconSize())) # Use standard icon sizes
 
         # Actions are no longer customizable, they are always shown.
-        settings_action = QAction(QIcon.fromTheme("preferences-system"), "Settings", self)
+        settings_action = QAction(get_icon("preferences-system", APP_ICON_PATH_SOURCE), "Settings", self)
         settings_action.triggered.connect(lambda: self._show_settings_page())
         toolbar.addAction(settings_action)
 
-        update_action = QAction(QIcon.fromTheme("system-software-update"), "Check for Updates", self)
+        update_action = QAction(get_icon("system-software-update", APP_ICON_PATH_SOURCE), "Check for Updates", self)
         update_action.triggered.connect(self._show_update_placeholder)
         toolbar.addAction(update_action)
 
         toolbar.addSeparator()
 
-        report_action = QAction(QIcon.fromTheme("tools-report-bug"), "Report a Bug", self)
+        report_action = QAction(get_icon("tools-report-bug", APP_ICON_PATH_SOURCE), "Report a Bug", self)
         report_action.triggered.connect(lambda: self._show_settings_page(SettingsPage.SECTION_REPORT))
         toolbar.addAction(report_action)
 
-        donate_action = QAction(QIcon.fromTheme("help-donate"), "Donate", self)
+        donate_action = QAction(get_icon("help-donate", APP_ICON_PATH_SOURCE), "Donate", self)
         donate_action.triggered.connect(lambda: self._show_settings_page(SettingsPage.SECTION_DONATE))
         toolbar.addAction(donate_action)
 
@@ -184,7 +212,7 @@ class MainWindow(QMainWindow):
         spacer.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
         toolbar.addWidget(spacer)
 
-        about_action = QAction(QIcon.fromTheme("help-about"), "About", self)
+        about_action = QAction(get_icon("help-about", APP_ICON_PATH_SOURCE), "About", self)
         about_action.triggered.connect(lambda: show_about_dialog(self))
         toolbar.addAction(about_action)
 
@@ -232,12 +260,16 @@ def show_about_dialog(parent=None):
         msg_box.setWindowTitle(f"About {APP_NAME}")
         msg_box.setTextFormat(Qt.RichText)
         msg_box.setText(about_text)
-        # Use absolute path for installed icon
-        icon_path = "/usr/share/nano-installer/assets/nano-installer.png"
-        if Path(icon_path).exists():
-            msg_box.setIconPixmap(QIcon(icon_path).pixmap(64, 64))
+        # Use installed path first, then source path for the about dialog icon
+        icon_pixmap = None
+        if Path(APP_ICON_PATH_INSTALLED).exists():
+            icon_pixmap = QIcon(APP_ICON_PATH_INSTALLED).pixmap(64, 64)
+        elif Path(APP_ICON_PATH_SOURCE).exists():
+            icon_pixmap = QIcon(APP_ICON_PATH_SOURCE).pixmap(64, 64)
         else:
-            msg_box.setIconPixmap(QIcon.fromTheme("system-software-install").pixmap(64, 64))
+            icon_pixmap = QIcon.fromTheme("system-software-install").pixmap(64, 64)
+            
+        msg_box.setIconPixmap(icon_pixmap)
         msg_box.exec_()
         
     except Exception:
