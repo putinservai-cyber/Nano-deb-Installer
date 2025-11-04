@@ -1,3 +1,9 @@
+nano-installer (1.0.7) unstable; urgency=medium
+
+  * Feat: Add GPL-3.0 license to the project.
+
+ -- putinservai &lt;putinservai@gmail.com&gt;  Tue, 04 Nov 2025 06:30:00 +0530
+
 nano-installer (1.0.6) unstable; urgency=medium
 
   * Fix: Resolve ImportError for simple_xor_decrypt.
