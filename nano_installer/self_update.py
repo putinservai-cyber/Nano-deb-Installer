@@ -6,18 +6,27 @@ import requests
 from PyQt5.QtWidgets import QMessageBox, QApplication, QWidget
 from PyQt5.QtCore import QProcess
 
-from .utils import get_installed_version, compare_versions
+from .utils import get_installed_version, compare_versions, get_nano_installer_package_name
 from .constants import APP_NAME, GITHUB_RELEASES_API
 
 def _get_latest_release_info() -> tuple[str | None, str | None]:
     """
     Fetches the latest release version and .deb download URL from GitHub API.
-    Returns (version, download_url) or (None, None) on failure.
+    Returns a tuple of (version, download_url) or (None, None) on failure.
     """
+    # 1. Try to get the latest release (preferred for package updates)
     try:
         response = requests.get(GITHUB_RELEASES_API, timeout=10)
         response.raise_for_status()
-        release_info = response.json()
+        releases = response.json()
+        
+        # If the releases list is empty, there's nothing to do.
+        if not releases:
+            print("No releases found on GitHub.")
+            return None, None
+        
+        # The latest release is the first one in the list.
+        release_info = releases[0]
         
         # The tag_name is typically 'vX.Y.Z', so we strip the 'v'
         latest_version = release_info.get('tag_name', '').lstrip('v')
@@ -28,13 +37,20 @@ def _get_latest_release_info() -> tuple[str | None, str | None]:
                 deb_url = asset.get('browser_download_url')
                 break
         
-        return latest_version, deb_url
+        if latest_version and deb_url:
+            return latest_version, deb_url
+        
+    except requests.exceptions.HTTPError as e:
+        if e.response.status_code == 404:
+            print(f"Releases API returned 404: No releases found. Error: {e}")
+        else:
+            print(f"Error fetching latest release info from GitHub: {e}")
     except requests.exceptions.RequestException as e:
         print(f"Error fetching latest release info from GitHub: {e}")
-        return None, None
     except Exception as e:
         print(f"Unexpected error during GitHub API call: {e}")
-        return None, None
+        
+    return None, None
 
 def _download_package(parent: QWidget, download_url: str) -> str | None:
     """
@@ -86,28 +102,36 @@ def check_for_updates(parent: QWidget):
     Checks for updates using the GitHub releases API and offers to install the .deb package.
     """
     # 1. Get the currently installed version
-    # We assume the package name is 'nano-installer' for the installed version check
-    installed_version = get_installed_version('nano-installer')
-    if not installed_version:
+    pkg_name = get_nano_installer_package_name()
+    installed_version = get_installed_version(pkg_name)
+    
+    # Determine the version to compare against
+    current_version = installed_version
+    if not current_version:
+        # Fallback to the hardcoded version in constants.py if not installed as a package
+        from .constants import VERSION
+        current_version = VERSION
+        
+    if not current_version:
         QMessageBox.warning(parent, "Update Check Failed",
-                            "Could not determine the installed version of 'nano-installer'. Cannot check for updates.")
+                            "Could not determine the current version. Cannot check for updates.")
         return
 
     # 2. Get the latest version and download URL from GitHub
     latest_version, download_url = _get_latest_release_info()
 
-    if not latest_version or not download_url:
+    if not latest_version:
         QMessageBox.warning(parent, "Update Check Failed",
-                            "Could not retrieve the latest version information from the server. Check your network connection.")
+                            "Could not retrieve the latest version information from the server. This may be due to a network issue or because no releases are available on GitHub.")
         return
 
     # 3. Compare versions
-    if compare_versions(latest_version, 'gt', installed_version):
+    if compare_versions(latest_version, 'gt', current_version):
         reply = QMessageBox.question(
             parent,
             "Update Available",
             f"A new version of {APP_NAME} is available!\n\n"
-            f"Current version: {installed_version}\n"
+            f"Current version: {current_version}\n"
             f"New version: {latest_version}\n\n"
             "Do you want to download and install it now? This requires administrative privileges.",
             QMessageBox.Yes | QMessageBox.No,
@@ -124,13 +148,8 @@ def check_for_updates(parent: QWidget):
             # Note: The temporary file will be cleaned up by the OS after the process exits.
     else:
         QMessageBox.information(parent, "Up to Date",
-                                f"{APP_NAME} (version {installed_version}) is already the latest version.")
+                                f"{APP_NAME} (version {current_version}) is already the latest version.")
 
-def _check_for_updates_git(parent: QWidget):
-    """(Fallback for dev) Placeholder for Git-based update check."""
-    QMessageBox.information(parent, "Developer Mode",
-                            "Update check is in developer mode (using Git).\n"
-                            "This is because the application does not appear to be installed as a system package.")
 
 # The main entry point for update check, which can be called from the GUI
 def check_for_self_update(parent: QWidget):
@@ -141,7 +160,5 @@ def check_for_self_update(parent: QWidget):
     # A simple check to see if we are running from the installed path or source path
     # This is a heuristic and might need refinement.
     # For now, we'll assume if get_installed_version fails, we are in dev mode.
-    if get_installed_version('nano-installer'):
-        check_for_updates(parent)
-    else:
-        _check_for_updates_git(parent)
+    # The check_for_updates function now handles both installed and source-run versions
+    check_for_updates(parent)

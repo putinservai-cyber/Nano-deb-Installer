@@ -63,6 +63,25 @@ class SettingsManager:
             self.settings.remove("sudo_password")
             return None
 
+    def save_virustotal_api_key(self, api_key: str):
+        """Encrypts and saves the VirusTotal API key."""
+        if not api_key:
+            self.settings.remove("virustotal_api_key")
+            return
+        encrypted_key = self.fernet.encrypt(api_key.encode('utf-8'))
+        self.settings.setValue("virustotal_api_key", encrypted_key.decode('utf-8'))
+
+    def get_virustotal_api_key(self) -> str | None:
+        """Retrieves and decrypts the VirusTotal API key."""
+        encrypted_key = self.settings.value("virustotal_api_key")
+        if not encrypted_key:
+            return None
+        try:
+            return self.fernet.decrypt(encrypted_key.encode('utf-8')).decode('utf-8')
+        except (InvalidToken, TypeError):
+            self.settings.remove("virustotal_api_key")
+            return None
+
     def get_verbose_logging_enabled(self) -> bool:
         return self.get_setting("verbose_logging_enabled", "false") == "true"
 

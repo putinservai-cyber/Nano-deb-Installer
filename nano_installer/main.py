@@ -27,35 +27,9 @@ from nano_installer.gui_components import OfflinePage
 from nano_installer.wizards import InstallWizard, UninstallWizard
 from nano_installer.donation_page import DonationPage
 from nano_installer.report_page import ReportPage
-from nano_installer.utils import get_deb_info, get_installed_version, compare_versions, is_critical_package, get_nano_installer_package_name
-from nano_installer.constants import APP_NAME, VERSION, BACKEND_PATH, APP_ICON_PATH_INSTALLED, APP_ICON_PATH_SOURCE
+from nano_installer.utils import get_deb_info, get_installed_version, compare_versions, is_critical_package, get_nano_installer_package_name, get_icon
+from nano_installer.constants import APP_NAME, VERSION, BACKEND_PATH, APP_ICON_PATH_INSTALLED, APP_ICON_PATH_SOURCE, APP_ICON_THEME_NAME
 from nano_installer.self_update import check_for_self_update
-
-# -----------------------
-# Icon Helper
-# -----------------------
-def get_icon(theme_name: str, fallback_path: str = None) -> QIcon:
-    """
-    Loads an icon from the theme with a fallback to a local file path.
-    This is crucial for cross-platform compatibility (e.g., Windows/macOS).
-    """
-    # 1. Try to load from theme (best for Linux desktop integration)
-    theme_icon = QIcon.fromTheme(theme_name)
-    if not theme_icon.isNull():
-        return theme_icon
-    
-    # 2. Fallback to local file path
-    if fallback_path and Path(fallback_path).exists():
-        return QIcon(fallback_path)
-        
-    # 3. Fallback to a generic theme icon if the first one failed
-    # This is a last resort for systems with poor theme support
-    generic_theme_icon = QIcon.fromTheme("application-x-executable")
-    if not generic_theme_icon.isNull():
-        return generic_theme_icon
-        
-    # 4. Return an empty icon if all else fails
-    return QIcon()
 
 # -----------------------
 # Core Logic
@@ -147,8 +121,6 @@ class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
         self.setWindowTitle(f"{APP_NAME}")
-        # Use the cross-platform icon helper for the main window icon
-        self.setWindowIcon(get_icon("nano-installer", APP_ICON_PATH_INSTALLED))
         self.setFixedSize(550, 450)
 
         # Central widget setup
@@ -239,10 +211,17 @@ def handle_command_line_args():
 def show_about_dialog(parent=None):
     """Show KDE-style about dialog."""
     try:
+        # Determine the version to display. Prioritize the installed package version.
+        pkg_name = get_nano_installer_package_name()
+        installed_version = get_installed_version(pkg_name)
+        
+        # If not installed as a package (e.g., running from source), use the constant.
+        display_version = installed_version if installed_version else VERSION
+
         from PyQt5.QtWidgets import QMessageBox
         about_text = f"""
 <h2>{APP_NAME}</h2>
-<p><b>Version:</b> {VERSION}</p>
+<p><b>Version:</b> {display_version}</p>
 <p><b>Advanced .deb Package Installer with KDE Integration</b></p>
 <p>Features:</p>
 <ul>
@@ -252,7 +231,8 @@ def show_about_dialog(parent=None):
 <li>Safe installation and uninstallation</li>
 <li>Native KDE theme integration</li>
 </ul>
-<p><b>Created with ❤️ for KDE neon users</b></p>
+<p><b>Created with &hearts; for KDE neon users.</b></p>
+<p style="font-size: small; color: grey;">Copyright &copy; 2025 putinservai-cyber. All rights reserved.</p>
 """
         
         msg_box = QMessageBox(parent)
@@ -261,7 +241,7 @@ def show_about_dialog(parent=None):
         msg_box.setText(about_text)
         # Use installed path first, then source path for the about dialog icon
         # Use the cross-platform icon helper for the about dialog icon
-        icon_pixmap = get_icon("nano-installer", APP_ICON_PATH_INSTALLED).pixmap(64, 64)
+        icon_pixmap = get_icon(APP_ICON_THEME_NAME, APP_ICON_PATH_INSTALLED).pixmap(64, 64)
         msg_box.setIconPixmap(icon_pixmap)
         msg_box.exec_()
         
@@ -278,7 +258,7 @@ def set_kde_icon_name(app):
     Instead, the icon from the .desktop file is used. We need to tell
     the application the name of its desktop file.
     """
-    app.setDesktopFileName(f'nano-installer.desktop')
+    app.setDesktopFileName(f'{APP_ICON_THEME_NAME}.desktop')
 
 def main():
     # Set appropriate platform theme for better desktop integration
@@ -299,6 +279,9 @@ def main():
     args = handle_command_line_args()
     
     app = QApplication(sys.argv)
+    
+    # Set the application icon globally. This helps with consistency.
+    app.setWindowIcon(get_icon(APP_ICON_THEME_NAME, APP_ICON_PATH_SOURCE))
     
     # Set the desktop file name for better KDE integration
     if "kde" in desktop_env or "plasma" in desktop_env:
