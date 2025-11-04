@@ -1,0 +1,31 @@
+Format: 1.8
+Date: Tue, 04 Nov 2025 12:01:43 +0530
+Source: nano-installer
+Binary: nano-installer
+Built-For-Profiles: noudeb
+Architecture: source all
+Version: 1.0.7
+Distribution: unstable
+Urgency: medium
+Maintainer: putinservai <putinservai@gmail.com>
+Description:
+ nano-installer - Advanced .deb Package Installer with KDE Integration
+Changes:
+ nano-installer (1.0.7) unstable; urgency=medium
+ .
+   * Feat: Add GPL-3.0 license to the project.
+Checksums-Sha1:
+ 488ea16cac67cef6f9e51fc0d21f160b4042d66b 575 nano-installer_1.0.7.dsc
+ 3cfba195a8aaf6aeff1ea40be74cafd44f5ea8fd 15722834 nano-installer_1.0.7.tar.gz
+ 72bee15138ff0a0c9649a6664a2e716a689065a7 1704010 nano-installer_1.0.7_all.deb
+ ab99a17c446c993c880202b3fe8dd35a6cd81c81 7415 nano-installer_1.0.7_amd64.buildinfo
+Checksums-Sha256:
+ 7d56d9c047fcf17857bf0d0631697aa49c27eaedbe53925d19cb25ee84c3204a 575 nano-installer_1.0.7.dsc
+ 082b8cd4a8589f6d44b4f11810add412156a478dd0fc401c897e24874a9a1fd9 15722834 nano-installer_1.0.7.tar.gz
+ c9d4a1285a36a3f0d400846aacc622ae0ddc2f2e362b9adb9ca854b7bd88dd56 1704010 nano-installer_1.0.7_all.deb
+ 8c3617d0b9645560e0c4d417a97cf983bcdaf7dd7cc2a05eeaf7ae8231104322 7415 nano-installer_1.0.7_amd64.buildinfo
+Files:
+ 7179abeb40bfc1c81d97181ad506fb7a 575 utils optional nano-installer_1.0.7.dsc
+ ef7048b5b1b42775290631ca78270e93 15722834 utils optional nano-installer_1.0.7.tar.gz
+ aa9822eddab9c467c1a2669d9172804d 1704010 utils optional nano-installer_1.0.7_all.deb
+ bcbaa602c4729db3874244fbc0ef3d4c 7415 utils optional nano-installer_1.0.7_amd64.buildinfo
