@@ -12,5 +12,5 @@ clean:
 	rm -f $(TARGET)
 
 install: $(TARGET)
-	install -d $(DESTDIR)/usr/bin
-	install -m 755 $(TARGET) $(DESTDIR)/usr/bin/
+	install -d $(DESTDIR)/usr/lib/nano-installer
+	install -m 755 $(TARGET) $(DESTDIR)/usr/lib/nano-installer/

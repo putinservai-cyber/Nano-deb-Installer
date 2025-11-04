@@ -2,9 +2,9 @@ from pathlib import Path
 
 # --- Constants ---
 APP_NAME = "Nano Installer"
-VERSION = "1.0.4"
+VERSION = "1.0.5"
 # Path to the compiled C backend executable
-BACKEND_PATH_INSTALLED = "/usr/bin/nano_backend"
+BACKEND_PATH_INSTALLED = "/usr/lib/nano-installer/nano_backend"
 BACKEND_PATH_SOURCE = str(Path(__file__).parent.parent / "nano_backend")
 
 def get_backend_path() -> str:
@@ -14,6 +14,8 @@ def get_backend_path() -> str:
         return BACKEND_PATH_INSTALLED
     # Fallback to the source path (for development)
     return BACKEND_PATH_SOURCE
+
+BACKEND_PATH = get_backend_path()
 
 # Icon and Asset Paths
 APP_ICON_NAME = "nano-installer.png"
