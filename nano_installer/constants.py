@@ -2,7 +2,7 @@ from pathlib import Path
 
 # --- Constants ---
 APP_NAME = "Nano Installer"
-VERSION = "1.0.5"
+VERSION = "1.0.8"
 # Path to the compiled C backend executable
 BACKEND_PATH_INSTALLED = "/usr/lib/nano-installer/nano_backend"
 BACKEND_PATH_SOURCE = str(Path(__file__).parent.parent / "nano_backend")
