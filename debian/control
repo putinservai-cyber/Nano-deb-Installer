@@ -1,0 +1,17 @@
+Source: nano-installer
+Section: utils
+Priority: optional
+Maintainer: putinservai <putinservai@gmail.com>
+Build-Depends: debhelper-compat (= 13), python3, dh-python
+Standards-Version: 4.6.0
+Homepage: 
+Vcs-Browser: 
+Vcs-Git: 
+
+Package: nano-installer
+Architecture: all
+Depends: ${misc:Depends}, ${python3:Depends}, python3-pyqt5, kdialog, libqt5svg5
+Description: Advanced .deb Package Installer with KDE Integration
+ The Nano Installer provides a secure and feature-rich graphical interface
+ for installing, updating, and managing local Debian packages (.deb files).
+ It includes features like security scanning and dependency management.

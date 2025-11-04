@@ -29,7 +29,7 @@ from nano_installer.donation_page import DonationPage
 from nano_installer.report_page import ReportPage
 from nano_installer.utils import get_deb_info, get_installed_version, compare_versions, is_critical_package, get_nano_installer_package_name
 from nano_installer.constants import APP_NAME, VERSION, BACKEND_PATH, APP_ICON_PATH_INSTALLED, APP_ICON_PATH_SOURCE
-from nano_installer.self_update import check_for_updates
+from nano_installer.self_update import check_for_self_update
 
 # -----------------------
 # Icon Helper
@@ -147,14 +147,8 @@ class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
         self.setWindowTitle(f"{APP_NAME}")
-        # Use installed path first, then source path for the application icon
-        if Path(APP_ICON_PATH_INSTALLED).exists():
-            self.setWindowIcon(QIcon(APP_ICON_PATH_INSTALLED))
-        elif Path(APP_ICON_PATH_SOURCE).exists():
-            self.setWindowIcon(QIcon(APP_ICON_PATH_SOURCE))
-        else:
-            # Fallback to theme icon for development/uninstalled environments
-            self.setWindowIcon(QIcon.fromTheme("system-software-install"))
+        # Use the cross-platform icon helper for the main window icon
+        self.setWindowIcon(get_icon("nano-installer", APP_ICON_PATH_INSTALLED))
         self.setFixedSize(550, 450)
 
         # Central widget setup
@@ -193,10 +187,6 @@ class MainWindow(QMainWindow):
         settings_action.triggered.connect(lambda: self._show_settings_page())
         toolbar.addAction(settings_action)
 
-        update_action = QAction(get_icon("system-software-update", APP_ICON_PATH_SOURCE), "Check for Updates", self)
-        update_action.triggered.connect(self._show_update_placeholder)
-        toolbar.addAction(update_action)
-
         toolbar.addSeparator()
 
         report_action = QAction(get_icon("tools-report-bug", APP_ICON_PATH_SOURCE), "Report a Bug", self)
@@ -216,13 +206,22 @@ class MainWindow(QMainWindow):
         about_action.triggered.connect(lambda: show_about_dialog(self))
         toolbar.addAction(about_action)
 
+        # Add a separator before the update action
+        toolbar.addSeparator()
+
+        update_action = QAction(get_icon("system-software-update", APP_ICON_PATH_SOURCE), "Check for Updates", self)
+        update_action.triggered.connect(lambda: check_for_self_update(self))
+        toolbar.addAction(update_action)
+
     def _show_settings_page(self, section_index: int = SettingsPage.SECTION_GENERAL):
         """Switches to the settings page and sets the active section."""
         self.settings_page.set_section(section_index)
         self.stack.setCurrentWidget(self.settings_page)
 
     def _show_update_placeholder(self):
-        check_for_updates(self)
+        # This function is now a placeholder as the update action was removed.
+        # It can be removed entirely if no other code references it.
+        pass
 
 def handle_command_line_args():
     """Handle command-line arguments for KDE shortcut integration."""
@@ -261,14 +260,8 @@ def show_about_dialog(parent=None):
         msg_box.setTextFormat(Qt.RichText)
         msg_box.setText(about_text)
         # Use installed path first, then source path for the about dialog icon
-        icon_pixmap = None
-        if Path(APP_ICON_PATH_INSTALLED).exists():
-            icon_pixmap = QIcon(APP_ICON_PATH_INSTALLED).pixmap(64, 64)
-        elif Path(APP_ICON_PATH_SOURCE).exists():
-            icon_pixmap = QIcon(APP_ICON_PATH_SOURCE).pixmap(64, 64)
-        else:
-            icon_pixmap = QIcon.fromTheme("system-software-install").pixmap(64, 64)
-            
+        # Use the cross-platform icon helper for the about dialog icon
+        icon_pixmap = get_icon("nano-installer", APP_ICON_PATH_INSTALLED).pixmap(64, 64)
         msg_box.setIconPixmap(icon_pixmap)
         msg_box.exec_()
         
@@ -306,7 +299,7 @@ def main():
     args = handle_command_line_args()
     
     app = QApplication(sys.argv)
-
+    
     # Set the desktop file name for better KDE integration
     if "kde" in desktop_env or "plasma" in desktop_env:
         set_kde_icon_name(app)

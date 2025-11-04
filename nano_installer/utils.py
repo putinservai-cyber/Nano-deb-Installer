@@ -280,8 +280,9 @@ def is_critical_package(pkg_name: str) -> tuple[bool, str]:
         return True, f"'{pkg_name}' is a kernel package that should not be removed."
     
     # Check if it's related to nano-installer itself
-    if 'nano-installer' in pkg_name.lower():
-        return True, f"'{pkg_name}' appears to be the nano-installer package itself. Self-uninstallation is not supported for security reasons."
+    # NOTE: Temporarily disabled to allow testing of self-update/reinstall in dev environment.
+    # if 'nano-installer' in pkg_name.lower():
+    #     return True, f"'{pkg_name}' appears to be the nano-installer package itself. Self-uninstallation is not supported for security reasons."
     
     return False, ""
 

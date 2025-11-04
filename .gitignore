@@ -455,3 +455,18 @@ FodyWeavers.xsd
 *.msix
 *.msm
 *.msp
+
+# Debian/Packaging
+*.deb
+*.build
+*.changes
+*.dsc
+*.tar.xz
+*.orig.tar.xz
+debian/debhelper-build-stamp
+debian/files
+debian/.debhelper/
+debian/nano-installer/
+debian/*.substvars
+debian/*.postinst.debhelper
+debian/*.prerm.debhelper

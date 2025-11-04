@@ -1,0 +1,15 @@
+nano-installer (1.0.5) unstable; urgency=medium
+
+  * Fix: Implement cross-platform icon loading with local asset fallback.
+  * Fix: Resolve circular import error by moving get_icon to utils.py.
+  * Fix: Update application entry point to correctly load local development package.
+
+ -- putinservai <putinservai@gmail.com>  Mon, 03 Nov 2025 20:24:00 +0530
+
+nano-installer (1.0.4) unstable; urgency=medium
+
+  * FHS compliance: Move application files from /opt to /usr/lib/nano-installer.
+  * Add application icon (assets/nano-installer.png) installation.
+  * Update application code to use the new icon path.
+
+ -- putinservai <putinservai@gmail.com>  Mon, 03 Nov 2025 08:14:00 +0530

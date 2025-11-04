@@ -1,0 +1,11 @@
+[Desktop Entry]
+Name=Nano Installer
+Comment=Advanced .deb Package Installer
+Exec=/usr/bin/nano-installer %f
+Terminal=false
+Type=Application
+Icon=nano-installer
+Categories=System;Utility;PackageManager;
+MimeType=application/x-debian-package;
+StartupNotify=true
+Keywords=deb;package;install;installer;
