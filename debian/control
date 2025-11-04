@@ -4,7 +4,8 @@ Priority: optional
 Maintainer: putinservai <putinservai@gmail.com>
 Build-Depends: debhelper-compat (= 13), python3, dh-python
 Standards-Version: 4.6.0
-Homepage: 
+License: GPL-3
+Homepage:
 Vcs-Browser: 
 Vcs-Git: 
 
