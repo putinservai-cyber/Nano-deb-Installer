@@ -1,3 +1,10 @@
+nano-installer (1.0.6) unstable; urgency=medium
+
+  * Fix: Resolve ImportError for simple_xor_decrypt.
+  * Fix: Update Debian icon path for proper desktop integration.
+
+ -- putinservai &lt;putinservai@gmail.com&gt;  Tue, 04 Nov 2025 05:54:00 +0530
+
 nano-installer (1.0.5) unstable; urgency=medium
 
   * Fix: Implement cross-platform icon loading with local asset fallback.
