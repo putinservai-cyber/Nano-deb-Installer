@@ -1,3 +1,9 @@
+nano-installer (1.0.8) unstable; urgency=medium
+
+  * Fix: Improve desktop shortcut trust for GNOME/GTK environments using gio set.
+
+ -- putinservai &lt;putinservai@gmail.com&gt;  Tue, 05 Nov 2025 11:36:16 +0530
+
 nano-installer (1.0.7) unstable; urgency=medium
 
   * Feat: Add GPL-3.0 license to the project.
