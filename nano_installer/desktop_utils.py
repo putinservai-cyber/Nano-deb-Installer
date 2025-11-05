@@ -248,10 +248,12 @@ def _mark_shortcut_trusted(shortcut_path: Path, log_callback):
     try:
         # Use kwriteconfig5 for KDE configuration
         subprocess.run(['kwriteconfig5', '--file', str(shortcut_path), '--group', 'Desktop Entry', '--key', 'X-Plasma-Trusted', 'true'], capture_output=True, timeout=5)
+        # Use gio set for GNOME/GTK trust
+        subprocess.run(['gio', 'set', str(shortcut_path), 'metadata::trusted', 'true'], capture_output=True, timeout=5)
         # Set executable permissions
         shortcut_path.chmod(shortcut_path.stat().st_mode | 0o111)
     except Exception as e:
-        log_callback(f"[INFO] Could not run KDE-specific trust commands: {e}")
+        log_callback(f"[INFO] Could not run desktop-specific trust commands: {e}")
 
 def _refresh_desktop(log_callback):
     log_callback("[INFO] Refreshing desktop to show new shortcuts...")
