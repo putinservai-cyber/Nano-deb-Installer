@@ -24,5 +24,4 @@ APP_ICON_PATH_INSTALLED = f"/usr/share/nano-installer/assets/{APP_ICON_NAME}"
 APP_ICON_PATH_SOURCE = str(Path(__file__).parent.parent / "assets" / APP_ICON_NAME)
 
 REPORT_ISSUES_URL = "https://github.com/putinservai-cyber/Nano-deb-Installer/issues"
-REPORT_ISSUES_URL = "https://github.com/putinservai-cyber/Nano-deb-Installer/issues"
 GITHUB_RELEASES_API = "https://api.github.com/repos/putinservai-cyber/Nano-deb-Installer/releases"

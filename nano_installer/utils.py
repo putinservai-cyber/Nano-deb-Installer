@@ -1,10 +1,13 @@
+import os
+import sys
+import io
+
 import subprocess
 from pathlib import Path
 import re
 import time
 import tarfile
-import io
-import os
+
 from PyQt5.QtCore import QThread, pyqtSignal
 from PyQt5.QtGui import QPixmap, QIcon
 
@@ -14,6 +17,8 @@ from PyQt5.QtGui import QPixmap, QIcon
 class WorkerThread(QThread):
     result = pyqtSignal(object)
     progress = pyqtSignal(dict)
+    # New signal to notify the worker function that cancellation is requested
+    stop_requested = pyqtSignal()
 
     def __init__(self, fn, *args, **kwargs):
         super().__init__()
@@ -21,6 +26,7 @@ class WorkerThread(QThread):
         self.args = args
         self.kwargs = kwargs
         self._is_running = True
+        self._process = None # To hold a reference to the running subprocess
 
     def run(self):
         try:
@@ -34,8 +40,31 @@ class WorkerThread(QThread):
     def is_running(self):
         return self._is_running and self.isRunning()
 
+    def set_process(self, proc: subprocess.Popen):
+        """Sets the subprocess reference for termination."""
+        self._process = proc
+
     def stop(self):
+        """Requests the worker to stop and attempts to terminate the subprocess."""
         self._is_running = False
+        self.stop_requested.emit() # Signal the worker function to stop gracefully
+        
+        if self._process and self._process.poll() is None:
+            # The process is still running, attempt to terminate it safely
+            try:
+                # Send SIGTERM to the process group to stop sudo and the backend
+                os.killpg(os.getpgid(self._process.pid), 15) # 15 is SIGTERM
+                self._process.wait(timeout=5)
+            except (ProcessLookupError, TimeoutError):
+                # If SIGTERM fails or times out, use SIGKILL as a last resort
+                try:
+                    os.killpg(os.getpgid(self._process.pid), 9) # 9 is SIGKILL
+                except ProcessLookupError:
+                    pass # Process already terminated
+            except Exception:
+                pass # Ignore other termination errors
+        
+        self.wait() # Wait for the thread to finish its run() method
 
 # -----------------------
 # Helper Functions
@@ -93,7 +122,7 @@ def compare_versions(v1, op, v2):
     """Compares two Debian versions using dpkg. Returns True if condition is met."""
     try:
         cmd = ["dpkg", "--compare-versions", v1, op, v2]
-        subprocess.run(cmd, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        subprocess.run(cmd, check=True, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
         return True
     except (subprocess.CalledProcessError, FileNotFoundError):
         return False
@@ -113,7 +142,8 @@ def get_deb_icon_data(deb_path: Path):
         ar_proc = subprocess.run(ar_extract_cmd, stdout=subprocess.PIPE, check=True)
         data_archive_stream = io.BytesIO(ar_proc.stdout)
 
-        with tarfile.open(fileobj=data_archive_stream, mode='r:*') as tf:
+        # Use 'r|*' for streaming decompression, which is more robust than 'r:*'
+        with tarfile.open(fileobj=data_archive_stream, mode='r|*') as tf:
             # Build a map of all members for fast lookups
             members_map = {member.name: member for member in tf.getmembers() if member.isfile()}
 
@@ -123,7 +153,7 @@ def get_deb_icon_data(deb_path: Path):
                     desktop_content = tf.extractfile(member_obj).read().decode('utf-8', errors='ignore')
                     for line in desktop_content.split('\n'):
                         if line.strip().startswith("Icon="):
-                            icon_name = line.split("=", 1)[1].strip()
+                            icon_name = line.split("=", 1).strip()
                             break
                     if icon_name:
                         break
@@ -168,7 +198,11 @@ def get_icon_for_installed_package(pkg_name: str) -> QPixmap:
             return None
 
         # Take the first .desktop file found
-        desktop_file_path = desktop_files_output.strip().split('\n')[0]
+        desktop_files = desktop_files_output.strip().split('\n')
+        if not desktop_files or not desktop_files[0]:
+            return None
+            
+        desktop_file_path = desktop_files[0]
 
         if not Path(desktop_file_path).is_file():
             return None
@@ -187,14 +221,54 @@ def get_icon_for_installed_package(pkg_name: str) -> QPixmap:
     except (FileNotFoundError, subprocess.CalledProcessError, IndexError):
         return None
 
-def parse_dependencies(depends_string: str) -> list[dict]:
-    """Parses dependency string and returns a list of dictionaries with name and version."""
+def check_missing_dependencies(depends_string: str, worker=None) -> list[str]:
+    """
+    Checks which packages in the dependency string are not currently installed.
+    Returns a list of missing dependency groups (represented by their first alternative).
+    """
+    missing_deps = []
+    dependency_groups = parse_dependencies(depends_string)
+    
+    for group in dependency_groups:
+        is_satisfied = False
+        
+        # Check if any alternative in the group is installed
+        for dep_info in group:
+            pkg_name = dep_info['name']
+            # Check if the package is installed
+            try:
+                # dpkg-query -W -f='${Status}' <pkg>
+                # We only care if it's installed, not the version, as apt will handle version resolution.
+                cmd = ["dpkg-query", "-W", "-f=${Status}", pkg_name]
+                result = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True, check=False)
+                status = result.stdout.strip()
+                
+                # dpkg-query returns non-zero if the package is not found.
+                # If it returns 0, we check the status.
+                if result.returncode == 0 and "install ok installed" in status:
+                    is_satisfied = True
+                    break # Dependency satisfied by this alternative
+            except Exception:
+                # Ignore errors and continue to the next alternative
+                continue
+        
+        if not is_satisfied:
+            # If no alternative satisfied the dependency, add the first one to the missing list
+            # This is for display purposes in the GUI.
+            missing_deps.append(group[0]['name'])
+            
+    return missing_deps
+
+def parse_dependencies(depends_string: str) -> list[list[dict]]:
+    """
+    Parses dependency string and returns a list of dependency groups.
+    Each group is a list of dictionaries representing alternatives.
+    Example: [[{'name': 'pkg1', 'version': ''}], [{'name': 'pkg2', 'version': ''}, {'name': 'pkg3', 'version': ''}]]
+    """
     if not depends_string:
         return []
     
-    deps = []
-    # Using a set to avoid duplicate package names if they appear multiple times
-    seen_deps = set()
+    dependency_groups = []
 
     # Split by comma for individual dependency entries
     for dep_entry in depends_string.split(','):
@@ -202,19 +276,27 @@ def parse_dependencies(depends_string: str) -> list[dict]:
         if not dep_entry:
             continue
 
-        # Handle alternative dependencies (e.g., package1 | package2) by taking the first one
-        first_alternative = dep_entry.split('|')[0].strip()
+        # Handle alternative dependencies (e.g., package1 | package2)
+        alternatives = []
+        for alternative_str in dep_entry.split('|'):
+            alternative_str = alternative_str.strip()
+            if not alternative_str:
+                continue
 
-        # Use regex to separate the package name from the version specifier
-        match = re.match(r'^\s*([a-zA-Z0-9.+-]+)\s*(\(.*\))?\s*$', first_alternative)
-        if match:
-            pkg_name = match.group(1)
-            version_spec = match.group(2) or "" # e.g., "(>= 1.2.3)"
-
-            if pkg_name not in seen_deps:
-                deps.append({'name': pkg_name, 'version': version_spec.strip()})
-                seen_deps.add(pkg_name)
-    return deps
+            # Use regex to separate the package name from the version specifier
+            # The regex is slightly modified to allow uppercase letters in package names (e.g., libGL)
+            match = re.match(r'^\s*([a-zA-Z0-9.+-]+)\s*(\(.*\))?\s*$', alternative_str)
+            if match:
+                pkg_name = match.group(1)
+                version_spec = match.group(2) or "" # e.g., "(>= 1.2.3)"
+                
+                # Only add the package name and version specifier
+                alternatives.append({'name': pkg_name, 'version': version_spec.strip()})
+        
+        if alternatives:
+            dependency_groups.append(alternatives)
+            
+    return dependency_groups
 
 def parse_desktop_file(file_path: Path) -> dict:
     """Parses a .desktop file and returns a dictionary of its main keys."""
@@ -294,7 +376,7 @@ def get_nano_installer_package_name() -> str:
     try:
         # Get the path of the current script
         # In a packaged app, this might be in /usr/lib/python3/dist-packages/nano_installer/
-        script_path = Path(os.path.abspath(sys.argv[0]))
+        script_path = Path(os.path.abspath(sys.argv))
 
         # Try to find which package owns this file
         result = subprocess.run(['dpkg', '-S', str(script_path)],

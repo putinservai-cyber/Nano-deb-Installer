@@ -36,6 +36,7 @@ Thumbs.db
 nano_installer/config.py
 nano_installer/security.py
 nano_backend # Compiled C executable
+nano_installer/config.enc
 
 # --- Remote Repository Ignores (Visual Studio/C# focused) ---
 ## Ignore Visual Studio temporary files, build results, and
@@ -470,3 +471,4 @@ debian/nano-installer/
 debian/*.substvars
 debian/*.postinst.debhelper
 debian/*.prerm.debhelper
+nano_installer/self_update.py

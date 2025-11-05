@@ -1,15 +1,16 @@
-import sys
 import subprocess
-import os
-import tempfile
+import logging
 import requests
+import tempfile
 from PyQt5.QtWidgets import QMessageBox, QApplication, QWidget
 from PyQt5.QtCore import QProcess
-
 from .utils import get_installed_version, compare_versions, get_nano_installer_package_name
 from .constants import APP_NAME, GITHUB_RELEASES_API
 
-def _get_latest_release_info() -> tuple[str | None, str | None]:
+# Configure logging
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+
+def _get_latest_release_info():
     """
     Fetches the latest release version and .deb download URL from GitHub API.
     Returns a tuple of (version, download_url) or (None, None) on failure.
@@ -57,17 +58,40 @@ def _download_package(parent: QWidget, download_url: str) -> str | None:
     Downloads the .deb package to a temporary file.
     Returns the path to the downloaded file or None on failure.
     """
-    QMessageBox.information(parent, "Downloading Update",
-                            f"Downloading the new version of {APP_NAME}. Please wait...")
+    # QMessageBox.information(parent, "Downloading Update",
+    #                         f"Downloading the new version of {APP_NAME}. Please wait...")
     
     try:
+        # Create a progress dialog
+        from PyQt5.QtWidgets import QProgressDialog
+        from PyQt5.QtCore import Qt
+        progress_dialog = QProgressDialog(f"Downloading {APP_NAME} update...", "Cancel", 0, 100, parent)
+        progress_dialog.setWindowTitle("Downloading Update")
+        progress_dialog.setWindowModality(Qt.WindowModal)
+        progress_dialog.setAutoClose(True)
+        progress_dialog.setAutoReset(True)
+        progress_dialog.setValue(0)
+        
         response = requests.get(download_url, stream=True, timeout=60)
         response.raise_for_status()
         
+        total_length = int(response.headers.get('content-length', 0))
+        chunk_size = 8192
+        
         # Create a temporary file to save the .deb package
         with tempfile.NamedTemporaryFile(suffix=".deb", delete=False) as tmp_file:
-            for chunk in response.iter_content(chunk_size=8192):
+            downloaded = 0
+            for chunk in response.iter_content(chunk_size=chunk_size):
+                if progress_dialog.wasCanceled():
+                    return None
+                
                 tmp_file.write(chunk)
+                downloaded += len(chunk)
+                
+                if total_length > 0:
+                    percent_complete = int((downloaded / total_length) * 100)
+                    progress_dialog.setValue(percent_complete)
+                    
             temp_path = tmp_file.name
         
         return temp_path
@@ -101,6 +125,7 @@ def check_for_updates(parent: QWidget):
     """
     Checks for updates using the GitHub releases API and offers to install the .deb package.
     """
+    logging.info("Checking for updates using GitHub releases API...")
     # 1. Get the currently installed version
     pkg_name = get_nano_installer_package_name()
     installed_version = get_installed_version(pkg_name)
@@ -118,9 +143,11 @@ def check_for_updates(parent: QWidget):
         return
 
     # 2. Get the latest version and download URL from GitHub
+    logging.info(f"Getting latest version and download URL from GitHub API: {GITHUB_RELEASES_API}")
     latest_version, download_url = _get_latest_release_info()
 
     if not latest_version:
+        logging.warning("Could not retrieve the latest version information from the server.")
         QMessageBox.warning(parent, "Update Check Failed",
                             "Could not retrieve the latest version information from the server. This may be due to a network issue or because no releases are available on GitHub.")
         return
@@ -143,8 +170,18 @@ def check_for_updates(parent: QWidget):
             deb_path = _download_package(parent, download_url)
             
             if deb_path:
-                # 5. Install the package
-                _install_update(parent, deb_path)
+                # 5. Verify the package
+                logging.info("Verifying the downloaded package...")
+                try:
+                    # Verify the package signature using gpg
+                    logging.info("Verifying package signature using gpg...")
+                    subprocess.check_call(['gpg', '--verify', deb_path], cwd='.')
+                    logging.info("Package signature verified successfully.")
+                    # 5. Install the package
+                    _install_update(parent, deb_path)
+                except subprocess.CalledProcessError as e:
+                    logging.error(f"Error verifying package signature: {e}")
+                    QMessageBox.critical(parent, "Update Failed", f"Error verifying package signature: {e}")
             # Note: The temporary file will be cleaned up by the OS after the process exits.
     else:
         QMessageBox.information(parent, "Up to Date",

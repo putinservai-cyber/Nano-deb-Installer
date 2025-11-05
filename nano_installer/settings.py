@@ -1,5 +1,11 @@
+import sys
 import subprocess
 from pathlib import Path
+
+# Add the project root to sys.path if run directly for testing
+if __name__ == "__main__":
+    sys.path.insert(0, str(Path(__file__).parent.parent))
+
 from cryptography.fernet import Fernet, InvalidToken
 from PyQt5.QtCore import QSettings, Qt, pyqtSignal
 from PyQt5.QtGui import QIcon
@@ -423,3 +429,4 @@ class SettingsPage(QWidget):
         """Allows external navigation to a specific settings section."""
         if 0 <= index < self.nav_list.count():
             self.nav_list.setCurrentRow(index)
+

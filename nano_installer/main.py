@@ -1,12 +1,14 @@
 import sys
 import os
 from pathlib import Path
+
+# Add the project root to sys.path. This must be done before any other local imports.
+# This allows the script to be run directly and find the 'nano_installer' package.
+sys.path.insert(0, str(Path(__file__).parent.parent))
+
+import logging
 from urllib.parse import urlparse, unquote
 import subprocess
-
-# Add the project root to sys.path if run directly
-if __name__ == "__main__":
-    sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from PyQt5.QtCore import Qt, QProcess
 from PyQt5.QtGui import QIcon
@@ -24,7 +26,7 @@ from PyQt5.QtWidgets import (
 # Local imports (now absolute)
 from nano_installer.settings import SettingsManager, SettingsPage
 from nano_installer.gui_components import OfflinePage
-from nano_installer.wizards import InstallWizard, UninstallWizard
+from nano_installer.wizards import InstallWizard, UninstallWizard, UpdateCacheWizard, UpgradeSystemWizard
 from nano_installer.donation_page import DonationPage
 from nano_installer.report_page import ReportPage
 from nano_installer.utils import get_deb_info, get_installed_version, compare_versions, is_critical_package, get_nano_installer_package_name, get_icon
@@ -183,7 +185,17 @@ class MainWindow(QMainWindow):
 
         update_action = QAction(get_icon("system-software-update", APP_ICON_PATH_SOURCE), "Check for Updates", self)
         update_action.triggered.connect(lambda: check_for_self_update(self))
+        # update_action.triggered.connect(lambda: print("Self-update functionality is disabled."))
         toolbar.addAction(update_action)
+
+        # Example: Add a button to update the package cache
+        update_cache_action = QAction(get_icon("view-refresh", APP_ICON_PATH_SOURCE), "Update Package Cache", self)
+        update_cache_action.triggered.connect(self._run_update_cache_wizard)
+        toolbar.addAction(update_cache_action)
+
+        upgrade_system_action = QAction(get_icon("update-recommended", APP_ICON_PATH_SOURCE), "Upgrade All Packages", self)
+        upgrade_system_action.triggered.connect(self._run_upgrade_system_wizard)
+        toolbar.addAction(upgrade_system_action)
 
     def _show_settings_page(self, section_index: int = SettingsPage.SECTION_GENERAL):
         """Switches to the settings page and sets the active section."""
@@ -194,6 +206,16 @@ class MainWindow(QMainWindow):
         # This function is now a placeholder as the update action was removed.
         # It can be removed entirely if no other code references it.
         pass
+
+    def _run_update_cache_wizard(self):
+        """Launches the wizard to update the apt cache."""
+        wiz = UpdateCacheWizard(self)
+        wiz.exec_()
+
+    def _run_upgrade_system_wizard(self):
+        """Launches the wizard to perform a full system upgrade."""
+        wiz = UpgradeSystemWizard(self)
+        wiz.exec_()
 
 def handle_command_line_args():
     """Handle command-line arguments for KDE shortcut integration."""
@@ -260,29 +282,27 @@ def set_kde_icon_name(app):
     """
     app.setDesktopFileName(f'{APP_ICON_THEME_NAME}.desktop')
 
-def main():
-    # Set appropriate platform theme for better desktop integration
-    desktop_env = os.environ.get("XDG_CURRENT_DESKTOP", "").lower()
-    
-    # Only set platform theme if not already set by user
-    if "QT_QPA_PLATFORMTHEME" not in os.environ:
-        # KDE Plasma and KDE neon
-        if "kde" in desktop_env or "plasma" in desktop_env:
-            # Use native KDE styling
-            os.environ["QT_QPA_PLATFORMTHEME"] = "kde"
-        # GTK-based desktops
-        elif any(desktop in desktop_env for desktop in ["gnome", "cinnamon", "mate", "xfce", "budgie"]):
-            os.environ["QT_QPA_PLATFORMTHEME"] = "gtk3"
-        # For other desktops, let Qt decide or use system default
 
+def main():
     # Handle command-line arguments
     args = handle_command_line_args()
     
+    # Initialize QApplication early to show message boxes
     app = QApplication(sys.argv)
+
+
     
     # Set the application icon globally. This helps with consistency.
     app.setWindowIcon(get_icon(APP_ICON_THEME_NAME, APP_ICON_PATH_SOURCE))
     
+    # Set appropriate platform theme for better desktop integration
+    desktop_env = os.environ.get("XDG_CURRENT_DESKTOP", "").lower()
+    if "QT_QPA_PLATFORMTHEME" not in os.environ:
+        if "kde" in desktop_env or "plasma" in desktop_env:
+            os.environ["QT_QPA_PLATFORMTHEME"] = "kde"
+        elif any(desktop in desktop_env for desktop in ["gnome", "cinnamon", "mate", "xfce", "budgie"]):
+            os.environ["QT_QPA_PLATFORMTHEME"] = "gtk3"
+
     # Set the desktop file name for better KDE integration
     if "kde" in desktop_env or "plasma" in desktop_env:
         set_kde_icon_name(app)

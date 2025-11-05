@@ -1,4 +1,5 @@
 import sys
+import os
 from pathlib import Path
 # Add the project root to sys.path if run directly
 if __name__ == "__main__":
@@ -18,6 +19,7 @@ from PyQt5.QtWidgets import (
     QLabel,
     QLineEdit,
     QListWidget,
+    QListWidgetItem,
     QMessageBox,
     QProgressBar,
     QPushButton,
@@ -39,11 +41,13 @@ from nano_installer.utils import (
     get_icon_for_installed_package,
     get_deb_icon_data,
     parse_dependencies,
+    check_missing_dependencies, # ADDED
     get_nano_installer_package_name,
 )
 from nano_installer.security import scan_with_virustotal, calculate_file_hash
 from nano_installer.gui_components import AuthenticationDialog, DependencyPopup
-from nano_installer.constants import APP_NAME, get_backend_path # APP_NAME and get_backend_path are defined in constants.py
+from nano_installer.desktop_utils import create_desktop_shortcut, remove_desktop_shortcuts
+from nano_installer.constants import APP_NAME, BACKEND_PATH # APP_NAME and BACKEND_PATH are defined in constants.py
 
 # -----------------------
 # Base Wizard for common operations
@@ -60,6 +64,15 @@ class BaseOperationWizard(QWizard):
         self.setFixedSize(600, 500)
         self.setWizardStyle(QWizard.ModernStyle)
         self.setWindowFlags(self.windowFlags() & ~Qt.WindowMinimizeButtonHint & ~Qt.WindowMaximizeButtonHint)
+        
+        # Connect the wizard's rejected signal (Cancel/Close) to the worker's stop method
+        self.rejected.connect(self.on_wizard_rejected)
+
+    def on_wizard_rejected(self):
+        """Called when the user presses Cancel or closes the window."""
+        if self._worker_thread:
+            self.log_text.append("\n[INFO] Cancellation requested. Attempting to stop background process...")
+            self._worker_thread.stop()
 
     def _create_progress_page(self, title, subtitle):
         """Creates a standardized progress page."""
@@ -98,6 +111,8 @@ class BaseOperationWizard(QWizard):
         self.progress.setValue(5)
         self.log_text.clear()
 
+
+
         auto_enabled = self.settings.get_setting("auto_password_enabled", "false") == "true"
         saved_password = self.settings.get_password() if auto_enabled else None
 
@@ -129,6 +144,71 @@ class BaseOperationWizard(QWizard):
         self._worker_thread.result.connect(on_done)
         self._worker_thread.start()
 
+    def _handle_worker_completion(self, result):
+        """
+        A centralized handler for worker thread completion.
+        This method processes the result, checks for common errors (backend, password),
+        and calls a success hook or handles failure UI.
+        """
+        # 1. Unpack result safely
+        if isinstance(result, Exception):
+            rc, output = -1, str(result)
+            leftover_data = None
+        elif len(result) == 3: # For uninstall wizard
+            rc, output, leftover_data = result
+        else:
+            rc, output = result
+            leftover_data = None
+
+        # 2. Check for critical backend errors first
+        backend_error_prefix = "[NANO_BACKEND_ERROR]"
+        backend_error_line = next((line for line in output.splitlines() if line.startswith(backend_error_prefix)), None)
+        if backend_error_line:
+            error_message = backend_error_line.replace(backend_error_prefix, "").strip()
+            QMessageBox.critical(self, "Backend Error", f"A critical error occurred in the backend process:\n\n{error_message}\n\n(Code: {rc})")
+            self.progress.setStyleSheet("QProgressBar::chunk { background-color: red; }")
+            self.button(QWizard.BackButton).setEnabled(True)
+            return
+
+        # 3. Check for password authentication errors
+        password_error_phrases = ["sorry, try again", "authentication failed", "incorrect password"]
+        is_password_error = rc != 0 and any(phrase in output.lower() for phrase in password_error_phrases)
+        if is_password_error:
+            if self._used_saved_password:
+                self.log_text.clear()
+                self.log_text.append("[ERROR] Saved password was incorrect or has expired. Please enter it manually.")
+                self.settings.save_password("")
+                self.settings.set_setting("auto_password_enabled", "false")
+            
+            self.progress.setValue(5)
+            self.progress.setStyleSheet("") # Reset style
+            self._ask_password_and_execute(is_retry=True)
+            return
+
+        # 4. Handle success or generic failure
+        if rc == 0:
+            self.progress.setValue(100)
+            self._on_operation_success(output, leftover_data) # Call success hook
+        elif rc == -15: # SIGTERM (Cancellation)
+            self.progress.setStyleSheet("QProgressBar::chunk { background-color: orange; }")
+            self.progress.setValue(0)
+            self.log_text.append("\n[INFO] Operation cancelled by user.")
+            QMessageBox.information(self, "Cancelled", f"The operation for '{self.pkg_name}' was cancelled by the user.")
+            self.button(QWizard.BackButton).setEnabled(True)
+        else:
+            # Generic failure
+            self.progress.setStyleSheet("QProgressBar::chunk { background-color: red; }")
+            op_name = self.pkg_name
+            QMessageBox.warning(self, "Operation Failed", f"The operation for '{op_name}' failed with an error (code: {rc}). See log for details.")
+            self.button(QWizard.BackButton).setEnabled(True)
+
+    def _on_operation_success(self, output: str, data: any):
+        """
+        Hook for subclasses to implement their specific success logic.
+        This is called by _handle_worker_completion on success.
+        """
+        self.next() # Default behavior is to just go to the next page.
+
     # --- Abstract methods for subclasses to implement ---
     def _get_operation_verb(self) -> str:
         raise NotImplementedError
@@ -155,6 +235,7 @@ class InstallWizard(BaseOperationWizard):
         self.is_extract_mode = is_extract_mode
         self.is_create_shortcut_mode = self.settings.get_setting("create_desktop_shortcut_enabled", "false") == "true"
         self._used_saved_password = False
+        self._deps_checked = False # New flag to prevent re-running dependency check on 'Back'
 
         verb = self._get_operation_verb()
 
@@ -185,7 +266,20 @@ class InstallWizard(BaseOperationWizard):
         l1.addWidget(self.cb_force_install)
         l1.addStretch()
 
-        # Page 2: Detailed Package Information
+        # Page 2: Dependency Check (New Page)
+        self.p_deps = QWizardPage()
+        self.p_deps.setTitle("Dependency Check")
+        self.p_deps.setSubTitle("Checking for missing dependencies...")
+        l_deps = QVBoxLayout(self.p_deps)
+        self.deps_status_label = QLabel("Initializing dependency check...")
+        self.deps_status_label.setWordWrap(True)
+        l_deps.addWidget(self.deps_status_label)
+        self.deps_list_widget = QListWidget()
+        self.deps_list_widget.setVisible(False)
+        l_deps.addWidget(self.deps_list_widget)
+        l_deps.addStretch()
+        
+        # Page 3: Detailed Package Information (Old Page 2)
         p2 = QWizardPage()
         p2.setTitle("Package Information")
         p2.setSubTitle("Review detailed package information and dependencies.")
@@ -233,7 +327,7 @@ class InstallWizard(BaseOperationWizard):
         
         l2.addWidget(self.info_tabs)
         
-        # Page 3: Summary and Ready to Install
+        # Page 4: Summary and Ready to Install (Old Page 3)
         p3 = QWizardPage()
         p3.setTitle(f"Ready to {verb}")
         p3.setSubTitle("Review the installation summary below.")
@@ -280,7 +374,7 @@ class InstallWizard(BaseOperationWizard):
 
         l3.addStretch()
 
-        # Page 4: Extract Location
+        # Page 5: Extract Location (Old Page 4)
         p_extract = QWizardPage()
         p_extract.setTitle("Select Extraction Location")
         p_extract.setSubTitle("Choose a directory where the package contents will be extracted.")
@@ -299,11 +393,11 @@ class InstallWizard(BaseOperationWizard):
         self.extract_path_edit.textChanged.connect(p_extract.completeChanged.emit)
         p_extract.isComplete = self.is_p_extract_complete
 
-        # Page 5: Installing / Extracting
+        # Page 6: Installing / Extracting (Old Page 5)
         p_install = self._create_progress_page("Installing", "Please wait...")
         self.install_log_text = self.log_text # Alias for clarity
 
-        # Page 6: Success
+        # Page 7: Success (Old Page 6)
         p_success = QWizardPage()
         p_success.setFinalPage(True)
         l_success = QVBoxLayout(p_success)
@@ -319,11 +413,12 @@ class InstallWizard(BaseOperationWizard):
         l_success.addStretch()
 
         self.setPage(1, self.p1)
-        self.setPage(2, p2)
-        self.setPage(3, p3)
-        self.setPage(4, p_extract)
-        self.setPage(5, p_install)
-        self.setPage(6, p_success)
+        self.setPage(2, self.p_deps) # New Dependency Check Page
+        self.setPage(3, p2)          # Old Page 2 (Package Info) is now Page 3
+        self.setPage(4, p3)          # Old Page 3 (Summary) is now Page 4
+        self.setPage(5, p_extract)   # Old Page 4 (Extract) is now Page 5
+        self.setPage(6, p_install)   # Old Page 5 (Install) is now Page 6
+        self.setPage(7, p_success)   # Old Page 6 (Success) is now Page 7
 
         self._summary_loaded = False
         self._scan_finished = False
@@ -344,13 +439,17 @@ class InstallWizard(BaseOperationWizard):
 
     def nextId(self):
         current = self.currentId()
-        if current == 3: # After ready to install page
+        if current == 1: # After Security Scan (Page 1)
+            return 2 # Go to Dependency Check (Page 2)
+        elif current == 2: # After Dependency Check (Page 2)
+            return 3 # Go to Package Information (Page 3)
+        elif current == 4: # After Ready to Install (Page 4)
             if self.is_extract_mode:
-                return 4 # Go to extract location page
+                return 5 # Go to Extract Location (Page 5)
             else:
-                return 5 # Go to install progress page
-        elif current == 4: # After extract location page
-            return 5 # Go to progress page
+                return 6 # Go to Install Progress (Page 6)
+        elif current == 5: # After Extract Location (Page 5)
+            return 6 # Go to Install Progress (Page 6)
         return super().nextId()
 
     def setVisible(self, visible):
@@ -385,13 +484,14 @@ class InstallWizard(BaseOperationWizard):
             icon_data = info.get("icon_data")
             
             name = deb_info.get("Package", self.deb_path.name)
+            self.pkg_name = name # Update the wizard's package name
             version = deb_info.get("Version", "Unknown")
             maintainer = deb_info.get("Maintainer", "Unknown")
             architecture = deb_info.get("Architecture", "Unknown")
             size = deb_info.get("Installed-Size", "Unknown")
             section = deb_info.get("Section", "Unknown")
             description = deb_info.get("Description", "No description available.")
-            depends = deb_info.get("Depends", "")
+            self.depends_string = deb_info.get("Depends", "") # Store dependency string
 
             # Update detailed info tabs
             self.pkg_name_detail.setText(f"<b>Package:</b> {name}")
@@ -409,12 +509,13 @@ class InstallWizard(BaseOperationWizard):
             
             # Update dependencies
             self.deps_list.clear()
-            if depends:
+            if self.depends_string:
                 # Parse dependencies (they're comma-separated with version info)
-                parsed_deps = parse_dependencies(depends)
-                for dep_info in parsed_deps:
-                    display_text = f"• {dep_info['name']} {dep_info['version']}"
-                    self.deps_list.addItem(display_text.strip())
+                dependency_groups = parse_dependencies(self.depends_string)
+                for group in dependency_groups:
+                    # Display the dependency group, showing alternatives if present
+                    display_text = " | ".join([f"{dep['name']} {dep['version']}".strip() for dep in group])
+                    self.deps_list.addItem(f"• {display_text}")
             else:
                 self.deps_list.addItem("• No dependencies required")
 
@@ -450,7 +551,9 @@ class InstallWizard(BaseOperationWizard):
     @pyqtSlot(int)
     def on_page_changed(self, idx):
         # The next button state is managed by the scan/load process, not page changes.
-        if idx == 5:  # Switched to Progress page
+        if idx == 2: # Switched to Dependency Check page
+            self.do_dependency_check()
+        elif idx == 6:  # Switched to Progress page
             self.do_operation()
 
         # Hide the back button on the final page
@@ -490,13 +593,52 @@ class InstallWizard(BaseOperationWizard):
             return self.cb_force_install.isChecked()
         return False # Default to disabled
 
+    def do_dependency_check(self):
+        """Starts the worker thread to check for missing dependencies, only if not already checked."""
+        if self._deps_checked:
+            return
+
+        self.deps_status_label.setText("Checking for missing dependencies...")
+        self.deps_list_widget.clear()
+        self.deps_list_widget.setVisible(False)
+        self.button(QWizard.NextButton).setEnabled(False)
+        
+        def on_done(missing_deps):
+            if isinstance(missing_deps, Exception):
+                self.deps_status_label.setText(f"<font color='red'>Error during dependency check: {missing_deps}</font>")
+                self.button(QWizard.NextButton).setEnabled(True) # Allow user to proceed anyway
+                self._deps_checked = True # Mark as checked even on error to prevent re-run
+                return
+            
+            if missing_deps:
+                self.deps_status_label.setText(f"<font color='orange'><b>{len(missing_deps)} missing dependencies found.</b></font>")
+                self.deps_list_widget.setVisible(True)
+                for dep in missing_deps:
+                    self.deps_list_widget.addItem(f"• {dep}")
+                
+                # Show a warning and ask the user to update cache/install deps
+                QMessageBox.warning(self, "Missing Dependencies",
+                                    "The package requires missing dependencies. "
+                                    "Please ensure your package cache is up-to-date and try again. "
+                                    "The installation process will attempt to resolve them, but may fail.")
+            else:
+                self.deps_status_label.setText("<font color='green'><b>All dependencies appear to be installed.</b></font>")
+                
+            self.button(QWizard.NextButton).setEnabled(True)
+            self._deps_checked = True # Mark as checked on success
+
+        # The worker function is check_missing_dependencies from utils.py
+        worker = WorkerThread(check_missing_dependencies, self.depends_string)
+        worker.result.connect(on_done)
+        worker.start()
+        self._deps_worker = worker
+
     def do_scan(self):
         self.prep_status_label.setText("Preparing security scan...")
 
         def on_progress(data):
             line = data.get("line", "")
             self.prep_status_label.setText(line)
-            # Fake progress during scan
             if "Calculating hash" in line:
                 self.prep_progress.setValue(40)
             elif "Querying" in line:
@@ -506,7 +648,6 @@ class InstallWizard(BaseOperationWizard):
             self._scan_finished = True
             if isinstance(res, Exception):
                 self._scan_status = "error"
-                # The new exception from scan_with_virustotal will have a good message.
                 self.scan_result_text.setText(f"{res}")
             elif isinstance(res, str):
                 self.scan_result_text.setText(res)
@@ -516,21 +657,25 @@ class InstallWizard(BaseOperationWizard):
                     self._scan_status = "suspicious"
                 elif "Clean" in res:
                     self._scan_status = "clean"
-                elif "UNKNOWN" in res: # Handle network errors / skipped scans
-                    self._scan_status = "error"
-                else: # The string is not a recognized report format
+                else:
                     self._scan_status = "error"
                     self.scan_result_text.append("\n\n[Error] Could not parse the scan result.")
-            else: # The worker returned something unexpected (e.g., None)
+            else:
                 self._scan_status = "error"
                 self.scan_result_text.setText(f"The scanner returned an unexpected result type: {type(res)}")
 
             self.handle_scan_finished()
 
-        self._scan_thread = WorkerThread(scan_with_virustotal, str(self.deb_path))
-        self._scan_thread.progress.connect(on_progress)
-        self._scan_thread.result.connect(on_done)
-        self._scan_thread.start()
+        try:
+            self._scan_thread = WorkerThread(scan_with_virustotal, str(self.deb_path))
+            self._scan_thread.progress.connect(on_progress)
+            self._scan_thread.result.connect(on_done)
+            self._scan_thread.start()
+        except ValueError as e:
+            self._scan_finished = True
+            self._scan_status = "error"
+            self.scan_result_text.setText(str(e))
+            self.handle_scan_finished()
 
     def handle_scan_finished(self):
         self.prep_progress.setValue(100)
@@ -563,8 +708,8 @@ class InstallWizard(BaseOperationWizard):
     def do_operation(self):
         """Prepares titles and starts the installation process."""
         verb = self._get_operation_verb()
-        self.page(5).setTitle(f"{verb}ing" + (" and Extracting" if self.is_extract_mode else ""))
-        self.page(5).setSubTitle(f"Please wait while the package is being {verb.lower()}ed...")
+        self.page(6).setTitle(f"{verb}ing" + (" and Extracting" if self.is_extract_mode else ""))
+        self.page(6).setSubTitle(f"Please wait while the package is being {verb.lower()}ed...")
         self._execute_operation()
 
     def _ask_password_and_execute_install(self, is_retry=False):
@@ -592,19 +737,28 @@ class InstallWizard(BaseOperationWizard):
                 # apt handles dependencies automatically, simplifying the Python worker.
                 if worker: worker.progress.emit({"type": "log", "line": "\n--- Starting package installation via C backend ---\n"})
                 
-                cmd = ["sudo", "-S", get_backend_path(), "apt-op", "install", str(self.deb_path)]
+                cmd = ["sudo", "-S", BACKEND_PATH, "apt-op", "install", str(self.deb_path).strip()]
                 if self.is_reinstall:
                     cmd.append("--reinstall")
 
                 output_lines = []
-                proc = subprocess.Popen(cmd, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, bufsize=1, encoding='utf-8')
+                # Use preexec_fn=os.setsid to create a new process group for safe termination
+                proc = subprocess.Popen(cmd, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, bufsize=1, encoding='utf-8', preexec_fn=os.setsid)
+                
+                # Pass the process to the worker thread for cancellation handling
+                if worker: worker.set_process(proc)
+                
                 proc.stdin.write(password + '\n')
                 proc.stdin.close()
 
                 if worker: worker.progress.emit({"type": "progress", "value": 5})
 
                 while True:
-                    if worker and not worker.is_running(): proc.terminate(); break
+                    # Check for cancellation request
+                    if worker and not worker.is_running():
+                        # The worker's stop() method handles process termination
+                        return -15, "".join(output_lines) # Return SIGTERM code for cancellation
+                        
                     line = proc.stdout.readline()
                     if not line: break
                     output_lines.append(line)
@@ -628,651 +782,47 @@ class InstallWizard(BaseOperationWizard):
                 self.install_log_text.verticalScrollBar().setValue(self.install_log_text.verticalScrollBar().maximum())
 
             # Try to parse progress from apt output
+            # This regex is for the main installation/unpacking phase
             match = re.search(r'(\d+)\s*%', line)
             if match:
                 # Cap at 99% to ensure only the 'done' callback sets it to 100%
                 self.progress.setValue(min(99, int(match.group(1))))
             elif data_type == "progress":
                 self.progress.setValue(data["value"])
+            
+            # Check for the final "Setting up" or "Processing triggers" lines to jump to 99%
+            if "Setting up" in line or "Processing triggers" in line:
+                self.progress.setValue(99)
 
-        def done(result):
-            if isinstance(result, Exception):
-                QMessageBox.warning(self, APP_NAME, f"Installation failed with an unexpected error: {result}")
-                self.button(QWizard.BackButton).setEnabled(True)
-                return
+        return install, on_progress, self._handle_worker_completion
 
-            rc, output = result
-            # --- New Enhanced Error Handling ---
-            # Check for specific errors from our C backend first.
-            backend_error_prefix = "[NANO_BACKEND_ERROR]"
-            backend_error_line = next((line for line in output.splitlines() if line.startswith(backend_error_prefix)), None)
+    def _on_operation_success(self, output: str, data: any):
+        """Handles successful installation, shortcut creation, and extraction."""
+        # Create shortcut if requested, before handling extraction.
+        if self.is_create_shortcut_mode and self.cb_create_shortcut_instance.isChecked() and self.pkg_name:
+            create_desktop_shortcut(self.pkg_name, self.install_log_text.append)
 
-            if backend_error_line:
-                # We have a specific error from our C code.
-                error_message = backend_error_line.replace(backend_error_prefix, "").strip()
-                QMessageBox.critical(self, "Backend Error", f"A critical error occurred in the backend process:\n\n{error_message}\n\n(Code: {rc})")
-                self.progress.setStyleSheet("QProgressBar::chunk { background-color: red; }")
-                self.button(QWizard.BackButton).setEnabled(True)
-                return
-            # --- End of New Error Handling ---
-
-            # Phrases that indicate a password error from different sudo versions/configs
-            password_error_phrases = [
-                "sorry, try again",
-                "authentication failed",
-                "incorrect password",
-                "incorrect authentication",
-            ]
-            is_password_error = rc != 0 and any(phrase in output.lower() for phrase in password_error_phrases)
-
-            if rc == 0:
-                # --- INSTALLATION SUCCEEDED ---
-
-                # Create shortcut if requested, before handling extraction.
-                if self.is_create_shortcut_mode and self.cb_create_shortcut_instance.isChecked():
-                    self._create_desktop_shortcut()
-
-                if self.is_extract_mode:
-                    self.install_log_text.append("\n--- Installation successful. Starting extraction phase. ---")
-                    self.progress.setValue(80)
-                    dest_dir = self.extract_path_edit.text()
-                    try:
-                        extract_cmd = ["dpkg-deb", "-x", str(self.deb_path), dest_dir]
-                        subprocess.run(extract_cmd, check=True, capture_output=True, text=True)
-                        self.install_log_text.append("Extraction successful.")
-                        self.success_label.setText(f"<b>{self.deb_path.name}</b> was installed and extracted successfully.")
-                        self.progress.setValue(100)
-                        self.next()
-                    except (subprocess.CalledProcessError, FileNotFoundError) as e:
-                        error_output = e.stderr if hasattr(e, 'stderr') else str(e)
-                        self.install_log_text.append(f"\n[ERROR] Extraction failed:\n{error_output}")
-                        self.progress.setStyleSheet("QProgressBar::chunk { background-color: orange; }")
-                        self.success_label.setText(f"<b>{self.deb_path.name}</b> was installed, but extraction failed.")
-                        QMessageBox.warning(self, "Partial Success", "The package was installed successfully, but the final extraction step failed. See log for details.")
-                        self.next()
-                else:
-                    # Standard install, just finish.
-                    self.progress.setValue(100)
-                    self.next()
-            elif is_password_error:
-                # --- PASSWORD FAILED ---
-                if self._used_saved_password:
-                    self.install_log_text.clear()
-                    self.install_log_text.append("[ERROR] Saved password was incorrect or has expired. Please enter it manually.")
-                    # For security, clear the bad password and disable the feature.
-                    self.settings.save_password("")
-                    self.settings.set_setting("auto_password_enabled", "false")
-
-                self.progress.setValue(5)
-                self.progress.setStyleSheet("") # Reset style
-                self._ask_password_and_execute(is_retry=True)
-            else:
-                # --- GENERIC FAILURE ---
-                self.progress.setStyleSheet("QProgressBar::chunk { background-color: red; }")
-                QMessageBox.warning(self, APP_NAME, f"Installation failed with an error (code: {rc}). See log for details.")
-                self.button(QWizard.BackButton).setEnabled(True)
-
-        return install, on_progress, done
-
-    def _create_desktop_shortcut(self):
-        """Creates a proper desktop shortcut with modern .desktop file standards."""
-        if not self.pkg_name:
-            self.install_log_text.append("[WARNING] Cannot create shortcut: package name is unknown.")
-            return
-
-        self.install_log_text.append(f"\n--- Creating desktop shortcut for {self.pkg_name} ---")
-        try:
-            # 1. Find the original .desktop file installed by the package
-            dpkg_cmd = ["dpkg", "-L", self.pkg_name]
-            dpkg_proc = subprocess.Popen(dpkg_cmd, stdout=subprocess.PIPE, text=True, encoding='utf-8')
-            grep_cmd = ["grep", r'/usr/share/applications/.*\.desktop$']
-            grep_proc = subprocess.Popen(grep_cmd, stdin=dpkg_proc.stdout, stdout=subprocess.PIPE, text=True, encoding='utf-8')
-            dpkg_proc.stdout.close()
-            desktop_files_output, _ = grep_proc.communicate()
-
-            if not desktop_files_output:
-                self.install_log_text.append("[WARNING] No .desktop file found for this package. Creating generic shortcut.")
-                self._create_generic_shortcut()
-                return
-
-            # Process multiple .desktop files if found
-            desktop_files = [f.strip() for f in desktop_files_output.strip().split('\n') if f.strip()]
-            created_shortcuts = []
-            
-            for desktop_file_path in desktop_files:
-                original_desktop_path = Path(desktop_file_path)
-                if not original_desktop_path.is_file():
-                    self.install_log_text.append(f"[WARNING] Desktop file '{original_desktop_path}' not found, skipping.")
-                    continue
-
-                self.install_log_text.append(f"[INFO] Processing: {original_desktop_path}")
-
-                # 2. Parse the .desktop file
-                desktop_info = self._parse_complete_desktop_file(original_desktop_path)
-                if not desktop_info.get("Name") or not desktop_info.get("Exec"):
-                    self.install_log_text.append(f"[WARNING] Essential fields missing in {original_desktop_path}, skipping.")
-                    continue
-
-                # Skip if marked as NoDisplay=true
-                if desktop_info.get("NoDisplay", "").lower() == "true":
-                    self.install_log_text.append(f"[INFO] Skipping {desktop_info['Name']} (NoDisplay=true)")
-                    continue
-
-                # 3. Create enhanced .desktop file
-                shortcut_path = self._create_enhanced_shortcut(desktop_info)
-                if shortcut_path:
-                    created_shortcuts.append(shortcut_path)
-                    self.install_log_text.append(f"[SUCCESS] Created shortcut: {shortcut_path}")
-
-            if created_shortcuts:
-                self.install_log_text.append(f"[SUCCESS] Created {len(created_shortcuts)} desktop shortcut(s)")
-                # Refresh desktop to show new shortcuts
-                self._refresh_desktop()
-            else:
-                self.install_log_text.append("[WARNING] No valid shortcuts could be created")
-                
-        except Exception as e:
-            self.install_log_text.append(f"[ERROR] Failed to create desktop shortcut: {e}")
-    
-    def _parse_complete_desktop_file(self, file_path: Path) -> dict:
-        """Parses a .desktop file completely with all standard fields."""
-        config = {}
-        if not file_path.is_file():
-            return config
-        
-        try:
-            with open(file_path, 'r', encoding='utf-8', errors='ignore') as f:
-                in_desktop_entry = False
-                for line in f:
-                    line = line.strip()
-                    if line == '[Desktop Entry]':
-                        in_desktop_entry = True
-                        continue
-                    if not in_desktop_entry or not line or line.startswith('#'):
-                        continue
-                    if line.startswith('[') and line.endswith(']'):
-                        # Another section starts
-                        break
-                    if '=' not in line:
-                        continue
-                        
-                    key, value = line.split('=', 1)
-                    key = key.strip()
-                    value = value.strip()
-                    
-                    # Parse all relevant desktop entry fields
-                    relevant_fields = [
-                        "Name", "GenericName", "Comment", "Icon", "Exec", "Path", 
-                        "Terminal", "Type", "Categories", "Keywords", "StartupNotify",
-                        "MimeType", "NoDisplay", "Hidden", "StartupWMClass", "Version"
-                    ]
-                    
-                    if key in relevant_fields:
-                        config[key] = value
-                        
-        except IOError:
-            return {}
-        return config
-    
-    def _create_enhanced_shortcut(self, desktop_info: dict) -> Path:
-        """Creates an enhanced desktop shortcut with modern standards."""
-        # Determine desktop directory
-        desktop_dir = self._get_desktop_directory()
-        if not desktop_dir:
-            return None
-        
-        # Create safe filename
-        app_name = desktop_info.get('Name', 'Unknown App')
-        safe_filename = self._create_safe_filename(app_name)
-        shortcut_path = desktop_dir / f"{safe_filename}.desktop"
-        
-        # Avoid filename conflicts
-        counter = 1
-        original_path = shortcut_path
-        while shortcut_path.exists():
-            shortcut_path = desktop_dir / f"{safe_filename}_{counter}.desktop"
-            counter += 1
-        
-        # Create enhanced .desktop content
-        content = self._build_desktop_file_content(desktop_info)
-        
-        try:
-            # Write the file
-            shortcut_path.write_text(content, encoding='utf-8')
-            # Set proper permissions (readable and executable)
-            shortcut_path.chmod(0o755)
-            
-            # For KDE/Plasma, mark as trusted
-            self._mark_shortcut_trusted(shortcut_path)
-            
-            return shortcut_path
-            
-        except Exception as e:
-            self.install_log_text.append(f"[ERROR] Failed to write shortcut file: {e}")
-            return None
-    
-    def _get_desktop_directory(self) -> Path:
-        """Gets the appropriate desktop directory for shortcuts."""
-        # Try XDG desktop directory first
-        try:
-            result = subprocess.run(['xdg-user-dir', 'DESKTOP'], 
-                                  capture_output=True, text=True, check=True)
-            desktop_path = Path(result.stdout.strip())
-            if desktop_path.is_dir():
-                return desktop_path
-        except (subprocess.CalledProcessError, FileNotFoundError):
-            pass
-        
-        # Fallback to standard locations
-        for desktop_name in ['Desktop', 'Рабочий стол', 'デスクトップ', 'Bureau', 'Escritorio']:
-            desktop_path = Path.home() / desktop_name
-            if desktop_path.is_dir():
-                return desktop_path
-        
-        # Create Desktop directory if none exists
-        desktop_path = Path.home() / 'Desktop'
-        try:
-            desktop_path.mkdir(exist_ok=True)
-            return desktop_path
-        except Exception as e:
-            self.install_log_text.append(f"[ERROR] Cannot create Desktop directory: {e}")
-            return None
-    
-    def _create_safe_filename(self, name: str) -> str:
-        """Creates a safe filename from application name."""
-        # Replace problematic characters
-        safe_chars = []
-        for char in name:
-            if char.isalnum() or char in (' ', '-', '_', '.'):
-                safe_chars.append(char)
-            else:
-                safe_chars.append('_')
-        
-        safe_name = ''.join(safe_chars).strip()
-        # Remove multiple spaces/underscores and limit length
-        safe_name = ' '.join(safe_name.split())
-        safe_name = safe_name.replace(' ', '_')
-        return safe_name[:50]  # Limit filename length
-    
-    def _build_desktop_file_content(self, desktop_info: dict) -> str:
-        """Builds enhanced .desktop file content with KDE-specific features."""
-        content = "[Desktop Entry]\n"
-        
-        # Essential fields
-        content += f"Version={desktop_info.get('Version', '1.0')}\n"
-        content += f"Type={desktop_info.get('Type', 'Application')}\n"
-        content += f"Name={desktop_info['Name']}\n"
-        
-        # Add GenericName if available
-        if desktop_info.get('GenericName'):
-            content += f"GenericName={desktop_info['GenericName']}\n"
-        
-        # Add Comment/Description
-        if desktop_info.get('Comment'):
-            content += f"Comment={desktop_info['Comment']}\n"
-        
-        # Execution info
-        content += f"Exec={desktop_info['Exec']}\n"
-        
-        # Working directory
-        if desktop_info.get('Path'):
-            content += f"Path={desktop_info['Path']}\n"
-        
-        # Terminal setting
-        content += f"Terminal={desktop_info.get('Terminal', 'false')}\n"
-        
-        # Icon
-        if desktop_info.get('Icon'):
-            content += f"Icon={desktop_info['Icon']}\n"
-        
-        # Categories for proper menu placement
-        if desktop_info.get('Categories'):
-            content += f"Categories={desktop_info['Categories']}\n"
-        else:
-            content += "Categories=Application;\n"
-        
-        # Keywords for search
-        if desktop_info.get('Keywords'):
-            content += f"Keywords={desktop_info['Keywords']}\n"
-        
-        # MIME types if supported
-        if desktop_info.get('MimeType'):
-            content += f"MimeType={desktop_info['MimeType']}\n"
-        
-        # Startup notification
-        content += f"StartupNotify={desktop_info.get('StartupNotify', 'true')}\n"
-        
-        # Window class for better window management
-        if desktop_info.get('StartupWMClass'):
-            content += f"StartupWMClass={desktop_info['StartupWMClass']}\n"
-        
-        # KDE-specific features
-        content += self._add_kde_specific_features(desktop_info)
-        
-        # Add metadata
-        content += f"X-Created-By=Nano Installer\n"
-        content += f"X-Creation-Time={int(time.time())}\n"
-        
-        return content
-    
-    def _add_kde_specific_features(self, desktop_info: dict) -> str:
-        """Adds KDE Plasma specific desktop shortcut features."""
-        kde_content = ""
-        
-        # KDE Activities support
-        kde_content += "X-KDE-Activities=*\n"
-        
-        # KDE shortcuts and actions
-        kde_content += self._add_kde_shortcuts(desktop_info)
-        
-        # KDE appearance and behavior
-        kde_content += "X-KDE-StartupNotify=true\n"
-        kde_content += "X-KDE-HasTempFileOption=false\n"
-        
-        # Plasma-specific features
-        kde_content += "X-Plasma-Trusted=true\n"
-        kde_content += "X-Plasma-DropMimeTypes=text/plain;text/uri-list;\n"
-        
-        # KDE protocol handling
-        if desktop_info.get('MimeType'):
-            kde_content += "X-KDE-Protocols=file;http;https;ftp;\n"
-        
-        # Window management hints
-        kde_content += "X-KDE-SubstituteUID=false\n"
-        kde_content += "X-KDE-Username=\n"
-        
-        # Desktop containment features
-        kde_content += "X-Plasma-API=javascript\n"
-        kde_content += "X-KDE-PluginInfo-EnabledByDefault=true\n"
-        
-        return kde_content
-    
-    def _add_kde_shortcuts(self, desktop_info: dict) -> str:
-        """Adds KDE keyboard shortcuts and context actions."""
-        shortcuts_content = ""
-        
-        # Add context menu actions for KDE
-        app_name = desktop_info.get('Name', 'Application')
-        
-        # KDE Actions for right-click context menu
-        shortcuts_content += "Actions=Settings;About;Uninstall;\n"
-        shortcuts_content += "\n"
-        
-        # Settings action
-        shortcuts_content += "[Desktop Action Settings]\n"
-        shortcuts_content += f"Name=Configure {app_name}\n"
-        shortcuts_content += f"Name[en_US]=Configure {app_name}\n"
-        shortcuts_content += "Icon=configure\n"
-        
-        # Try to find settings/preferences command
-        exec_cmd = desktop_info.get('Exec', '')
-        if exec_cmd:
-            base_cmd = exec_cmd.split()[0] if exec_cmd.split() else ''
-            # Common settings patterns
-            settings_patterns = [
-                f"{base_cmd} --preferences",
-                f"{base_cmd} --settings",
-                f"{base_cmd} --config",
-                f"{base_cmd} -p",
-                "systemsettings5"
-            ]
-            shortcuts_content += f"Exec={settings_patterns[0]}\n"
-        else:
-            shortcuts_content += "Exec=systemsettings5\n"
-        shortcuts_content += "\n"
-        
-        # About action
-        shortcuts_content += "[Desktop Action About]\n"
-        shortcuts_content += f"Name=About {app_name}\n"
-        shortcuts_content += f"Name[en_US]=About {app_name}\n"
-        shortcuts_content += "Icon=help-about\n"
-        if exec_cmd:
-            base_cmd = exec_cmd.split()[0] if exec_cmd.split() else ''
-            shortcuts_content += f"Exec={base_cmd} --help\n"
-        else:
-            shortcuts_content += "Exec=khelpcenter\n"
-        shortcuts_content += "\n"
-        
-        # Uninstall action
-        shortcuts_content += "[Desktop Action Uninstall]\n"
-        shortcuts_content += f"Name=Uninstall {app_name}\n"
-        shortcuts_content += f"Name[en_US]=Uninstall {app_name}\n"
-        shortcuts_content += "Icon=edit-delete\n"
-        # installer_path needs to be relative to the main script, which is nano-installer.py
-        # We use Path(__file__).parent.parent to get back to the root directory
-        installer_path = str(Path(__file__).parent.parent / "nano-installer.py")
-        shortcuts_content += f"Exec=python3 '{installer_path}' --uninstall '{self.pkg_name}'\n"
-        shortcuts_content += "\n"
-        
-        return shortcuts_content
-    
-    def _mark_shortcut_trusted(self, shortcut_path: Path):
-        """Marks the shortcut as trusted for KDE Plasma with comprehensive integration."""
-        try:
-            # Method 1: Set Plasma trusted attribute directly in file
-            self._set_plasma_trusted_in_file(shortcut_path)
-            
-            # Method 2: Use kwriteconfig5 for KDE configuration
-            self._configure_kde_shortcut_settings(shortcut_path)
-            
-            # Method 3: Add to KDE's trusted desktop files list
-            self._add_to_kde_trusted_list(shortcut_path)
-            
-            # Method 4: Set proper KDE file attributes
-            self._set_kde_file_attributes(shortcut_path)
-            
-        except Exception as e:
-            self.install_log_text.append(f"[INFO] KDE integration partially completed: {e}")
-    
-    def _set_plasma_trusted_in_file(self, shortcut_path: Path):
-        """Sets Plasma trusted flag directly in the .desktop file."""
-        try:
-            # Read current content
-            with open(shortcut_path, 'r', encoding='utf-8') as f:
-                content = f.read()
-            
-            # Add trusted flag if not already present
-            if 'X-Plasma-Trusted=true' not in content:
-                content = content.rstrip() + '\nX-Plasma-Trusted=true\n'
-            
-            # Write back
-            with open(shortcut_path, 'w', encoding='utf-8') as f:
-                f.write(content)
-                
-        except Exception:
-            pass
-    
-    def _configure_kde_shortcut_settings(self, shortcut_path: Path):
-        """Configures KDE-specific shortcut settings."""
-        try:
-            # Use kwriteconfig5 to set various KDE properties
-            kde_configs = [
-                ['kwriteconfig5', '--file', str(shortcut_path), '--group', 'Desktop Entry', '--key', 'X-Plasma-Trusted', 'true'],
-                ['kwriteconfig5', '--file', str(shortcut_path), '--group', 'Desktop Entry', '--key', 'X-KDE-StartupNotify', 'true'],
-                ['kwriteconfig5', '--file', str(shortcut_path), '--group', 'Desktop Entry', '--key', 'X-KDE-Activities', '*'],
-            ]
-            
-            for config_cmd in kde_configs:
-                subprocess.run(config_cmd, capture_output=True, timeout=5)
-                
-        except Exception:
-            pass
-    
-    def _add_to_kde_trusted_list(self, shortcut_path: Path):
-        """Adds shortcut to KDE's global trusted desktop files list."""
-        try:
-            # KDE stores trusted desktop files in kdesktoprc
-            config_dir = Path.home() / '.config'
-            kdesktop_rc = config_dir / 'kdesktoprc'
-            
-            if not kdesktop_rc.exists():
-                return
-            
-            # Use kwriteconfig5 to add to trusted list
-            subprocess.run([
-                'kwriteconfig5', '--file', str(kdesktop_rc),
-                '--group', 'Desktop', '--key', 'TrustedDesktopFiles', 
-                str(shortcut_path)
-            ], capture_output=True, timeout=5)
-            
-        except Exception:
-            pass
-    
-    def _set_kde_file_attributes(self, shortcut_path: Path):
-        """Sets KDE-specific file attributes for better integration."""
-        try:
-            # Mark as KDE trusted using extended attributes
-            subprocess.run([
-                'setfattr', '-n', 'user.kde.trusted', '-v', 'true', str(shortcut_path)
-            ], capture_output=True)
-            
-            # Set KDE desktop file type
-            subprocess.run([
-                'setfattr', '-n', 'user.mime_type', '-v', 'application/x-desktop', str(shortcut_path)
-            ], capture_output=True)
-            
-        except Exception:
-            pass  # Extended attributes might not be supported
-    
-    def _refresh_desktop(self):
-        """Refreshes the desktop using KDE-specific methods and fallbacks."""
-        try:
-            self.install_log_text.append("[INFO] Refreshing desktop to show new shortcuts...")
-            
-            # KDE-specific desktop refresh methods
-            kde_commands = [
-                # Rebuild KDE's system configuration cache
-                ['kbuildsycoca5', '--noincremental'],
-                # Refresh desktop containment
-                ['qdbus', 'org.kde.plasmashell', '/PlasmaShell', 'org.kde.PlasmaShell.refreshCurrentShell'],
-                # Update desktop database
-                ['kbuildsycoca5'],
-                # Force desktop to reload
-                ['qdbus', 'org.kde.kdesktop', '/Desktop', 'org.kde.kdesktop.Desktop.refresh'],
-            ]
-            
-            # Generic fallback commands
-            fallback_commands = [
-                ['update-desktop-database', str(Path.home() / 'Desktop')],
-                ['xdg-desktop-menu', 'forceupdate'],
-                ['gtk-update-icon-cache', '-f', str(Path.home() / '.local/share/icons/')],
-            ]
-            
-            # Try KDE-specific methods first
-            kde_success = False
-            for cmd in kde_commands:
-                try:
-                    result = subprocess.run(cmd, capture_output=True, timeout=10)
-                    if result.returncode == 0:
-                        kde_success = True
-                        self.install_log_text.append(f"[SUCCESS] KDE refresh: {' '.join(cmd)}")
-                        break
-                except (subprocess.CalledProcessError, FileNotFoundError, subprocess.TimeoutExpired):
-                    continue
-            
-            # If KDE methods failed, try generic methods
-            if not kde_success:
-                for cmd in fallback_commands:
-                    try:
-                        result = subprocess.run(cmd, capture_output=True, timeout=10)
-                        if result.returncode == 0:
-                            self.install_log_text.append(f"[SUCCESS] Generic refresh: {' '.join(cmd)}")
-                            break
-                    except (subprocess.CalledProcessError, FileNotFoundError, subprocess.TimeoutExpired):
-                        continue
-            
-            # Additional KDE-specific notifications
-            self._notify_kde_desktop_changes()
-            
-        except Exception as e:
-            self.install_log_text.append(f"[WARNING] Desktop refresh partially failed: {e}")
-    
-    def _notify_kde_desktop_changes(self):
-        """Notifies KDE about desktop changes using various methods."""
-        try:
-            # Method 1: Use D-Bus to notify Plasma
-            dbus_notifications = [
-                # Notify desktop about new files
-                ['qdbus', 'org.freedesktop.FileManager1', '/org/freedesktop/FileManager1', 
-                 'org.freedesktop.FileManager1.ShowFolders', str(Path.home() / 'Desktop')],
-                # Notify icon cache about changes
-                ['qdbus', 'org.kde.KIconLoader', '/KIconLoader', 'org.kde.KIconLoader.newIconLoader'],
-                # Refresh Plasma desktop containment
-                ['qdbus', 'org.kde.plasmashell', '/PlasmaShell', 
-                 'org.kde.PlasmaShell.evaluateScript', 
-                 'desktops().forEach(d => d.currentConfigGroup = ["General"]; d.reloadConfig())'],
-            ]
-            
-            for cmd in dbus_notifications:
-                try:
-                    subprocess.run(cmd, capture_output=True, timeout=5)
-                except Exception:
-                    continue
-            
-            # Method 2: Create desktop notification
-            self._create_kde_notification()
-            
-        except Exception:
-            pass  # Not critical
-    
-    def _create_kde_notification(self):
-        """Creates a KDE notification about the new shortcut."""
-        try:
-            if hasattr(self, 'pkg_name') and self.pkg_name:
-                notification_cmd = [
-                    'kdialog', '--title', 'Nano Installer',
-                    '--passivepopup', f'Desktop shortcut created for {self.pkg_name}',
-                    '3'
-                ]
-                subprocess.run(notification_cmd, capture_output=True, timeout=5)
-        except Exception:
-            pass
-    
-    def _create_generic_shortcut(self):
-        """Creates a generic shortcut when no .desktop file is found."""
-        try:
-            desktop_dir = self._get_desktop_directory()
-            if not desktop_dir:
-                return
-            
-            # Create a basic shortcut for the package
-            safe_filename = self._create_safe_filename(self.pkg_name)
-            shortcut_path = desktop_dir / f"{safe_filename}.desktop"
-            
-            # Get package description if available
+        if self.is_extract_mode:
+            self.install_log_text.append("\n--- Installation successful. Starting extraction phase. ---")
+            self.progress.setValue(80) # Visually indicate a new step
+            dest_dir = self.extract_path_edit.text()
             try:
-                desc_result = subprocess.run(['apt-cache', 'show', self.pkg_name],
-                                           capture_output=True, text=True)
-                description = "Installed application"
-                for line in desc_result.stdout.split('\n'):
-                    if line.startswith('Description:'):
-                        description = line.split(':', 1)[1].strip()
-                        break
-            except Exception:
-                description = "Installed application"
-            
-            # Create generic .desktop content
-            content = f"""[Desktop Entry]
-Version=1.0
-Type=Application
-Name={self.pkg_name.title()}
-Comment={description}
-Icon=application-x-executable
-Exec={self.pkg_name}
-Terminal=false
-Categories=Application;
-StartupNotify=true
-X-Created-By=Nano Installer
-X-Creation-Time={int(time.time())}
-"""
-            
-            shortcut_path.write_text(content, encoding='utf-8')
-            shortcut_path.chmod(0o755)
-            
-            self.install_log_text.append(f"[SUCCESS] Created generic shortcut: {shortcut_path}")
-            
-        except Exception as e:
-            self.install_log_text.append(f"[ERROR] Failed to create generic shortcut: {e}")
+                extract_cmd = ["dpkg-deb", "-x", str(self.deb_path), dest_dir]
+                subprocess.run(extract_cmd, check=True, capture_output=True, text=True)
+                self.install_log_text.append("Extraction successful.")
+                self.success_label.setText(f"<b>{self.deb_path.name}</b> was installed and extracted successfully.")
+                self.progress.setValue(100)
+                self.next()
+            except (subprocess.CalledProcessError, FileNotFoundError) as e:
+                error_output = e.stderr if hasattr(e, 'stderr') else str(e)
+                self.install_log_text.append(f"\n[ERROR] Extraction failed:\n{error_output}")
+                self.progress.setStyleSheet("QProgressBar::chunk { background-color: orange; }")
+                self.success_label.setText(f"<b>{self.deb_path.name}</b> was installed, but extraction failed.")
+                QMessageBox.warning(self, "Partial Success", "The package was installed successfully, but the final extraction step failed. See log for details.")
+                self.next()
+        else:
+            # Standard install, just finish.
+            self.next()
 
 # -----------------------
 # Uninstall wizard
@@ -1281,7 +831,6 @@ class UninstallWizard(BaseOperationWizard):
     def __init__(self, pkg_name, parent=None):
         super().__init__(pkg_name, parent)
         self.found_leftover_files = []
-        self.shortcut_path_to_remove = None
         self.setWindowTitle(f"Uninstall {pkg_name}")
 
         # --- Page 1: Confirmation ---
@@ -1391,273 +940,6 @@ class UninstallWizard(BaseOperationWizard):
         if page and page.isFinalPage():
             self.button(QWizard.BackButton).hide()
 
-    def _prepare_for_shortcut_removal(self):
-        """
-        Finds all potential desktop shortcuts associated with the package before it's uninstalled.
-        Stores the list in self.shortcuts_to_remove.
-        """
-        self.shortcuts_to_remove = []
-        self.uninstall_log_text.append("--- Checking for desktop shortcuts to remove ---")
-        
-        try:
-            # Get desktop directory
-            desktop_dir = self._get_desktop_directory_for_removal()
-            if not desktop_dir:
-                self.uninstall_log_text.append("[INFO] No Desktop directory found. Skipping shortcut removal.")
-                return
-            
-            # Method 1: Find shortcuts based on installed .desktop files
-            self._find_shortcuts_from_desktop_files(desktop_dir)
-            
-            # Method 2: Find shortcuts created by our installer (with metadata)
-            self._find_shortcuts_by_metadata(desktop_dir)
-            
-            # Method 3: Find shortcuts by package name (fallback)
-            self._find_shortcuts_by_package_name(desktop_dir)
-            
-            if self.shortcuts_to_remove:
-                self.uninstall_log_text.append(f"[INFO] Found {len(self.shortcuts_to_remove)} shortcut(s) to remove")
-                for shortcut in self.shortcuts_to_remove:
-                    self.uninstall_log_text.append(f"[INFO] Will remove: {shortcut}")
-            else:
-                self.uninstall_log_text.append("[INFO] No desktop shortcuts found for this package.")
-                
-        except Exception as e:
-            self.uninstall_log_text.append(f"[WARNING] Error checking for shortcuts: {e}")
-    
-    def _get_desktop_directory_for_removal(self) -> Path:
-        """Gets the desktop directory for shortcut removal."""
-        # Try XDG desktop directory first
-        try:
-            result = subprocess.run(['xdg-user-dir', 'DESKTOP'], 
-                                  capture_output=True, text=True, check=True)
-            desktop_path = Path(result.stdout.strip())
-            if desktop_path.is_dir():
-                return desktop_path
-        except (subprocess.CalledProcessError, FileNotFoundError):
-            pass
-        
-        # Fallback to standard locations
-        for desktop_name in ['Desktop', 'Рабочий стол', 'デスクトップ', 'Bureau', 'Escritorio']:
-            desktop_path = Path.home() / desktop_name
-            if desktop_path.is_dir():
-                return desktop_path
-        
-        return None
-    
-    def _find_shortcuts_from_desktop_files(self, desktop_dir: Path):
-        """Find shortcuts based on installed .desktop files."""
-        try:
-            # Find .desktop files installed by the package
-            dpkg_cmd = ["dpkg", "-L", self.pkg_name]
-            dpkg_proc = subprocess.Popen(dpkg_cmd, stdout=subprocess.PIPE, text=True, encoding='utf-8')
-            grep_cmd = ["grep", r'/usr/share/applications/.*\.desktop$']
-            grep_proc = subprocess.Popen(grep_cmd, stdin=dpkg_proc.stdout, stdout=subprocess.PIPE, text=True, encoding='utf-8')
-            dpkg_proc.stdout.close()
-            desktop_files_output, _ = grep_proc.communicate()
-            
-            if not desktop_files_output:
-                return
-            
-            desktop_files = [f.strip() for f in desktop_files_output.strip().split('\n') if f.strip()]
-            
-            for desktop_file_path in desktop_files:
-                original_desktop_path = Path(desktop_file_path)
-                if not original_desktop_path.is_file():
-                    continue
-                
-                # Parse the .desktop file
-                desktop_info = self._parse_desktop_file_for_removal(original_desktop_path)
-                app_name = desktop_info.get("Name")
-                if not app_name:
-                    continue
-                
-                # Find potential shortcuts based on the app name
-                safe_filename = self._create_safe_filename_for_removal(app_name)
-                
-                # Check various possible filenames
-                potential_names = [
-                    f"{safe_filename}.desktop",
-                    f"{safe_filename}_1.desktop",
-                    f"{safe_filename}_2.desktop",
-                    f"{app_name.replace(' ', '_')}.desktop",
-                    f"{app_name}.desktop"
-                ]
-                
-                for name in potential_names:
-                    shortcut_path = desktop_dir / name
-                    if shortcut_path.is_file() and shortcut_path not in self.shortcuts_to_remove:
-                        # Verify this shortcut is related to our package
-                        if self._verify_shortcut_belongs_to_package(shortcut_path, desktop_info):
-                            self.shortcuts_to_remove.append(shortcut_path)
-                            
-        except Exception:
-            pass  # Silent fail, other methods will try
-    
-    def _find_shortcuts_by_metadata(self, desktop_dir: Path):
-        """Find shortcuts created by our installer using metadata."""
-        try:
-            # Look for .desktop files with our metadata
-            for shortcut_file in desktop_dir.glob("*.desktop"):
-                if shortcut_file in self.shortcuts_to_remove:
-                    continue # Already found by another method
-
-                try:
-                    with open(shortcut_file, 'r', encoding='utf-8') as f:
-                        content = f.read()
-                        # Check for our installer's signature and that the uninstall action points to the correct package
-                        is_our_shortcut = "X-Created-By=Nano Installer" in content
-                        uninstall_action_correct = f"Exec=python3 .* --uninstall '{self.pkg_name}'" in content
-
-                        # A more lenient check if the strict one fails
-                        name_matches = f"Name=Uninstall {self.pkg_name}" in content
-
-                        if is_our_shortcut and (uninstall_action_correct or name_matches):
-                            if shortcut_file not in self.shortcuts_to_remove:
-                                self.shortcuts_to_remove.append(shortcut_file)
-                except Exception:
-                    continue
-                    
-        except Exception:
-            pass
-    
-    def _find_shortcuts_by_package_name(self, desktop_dir: Path):
-        """Find shortcuts by package name as fallback."""
-        try:
-            # Look for shortcuts that might be named after the package
-            safe_pkg_name = self._create_safe_filename_for_removal(self.pkg_name)
-            potential_names = [
-                f"{safe_pkg_name}.desktop",
-                f"{safe_pkg_name.title()}.desktop",
-                f"{self.pkg_name}.desktop",
-                f"{self.pkg_name.title()}.desktop"
-            ]
-            
-            for name in potential_names:
-                shortcut_path = desktop_dir / name
-                if shortcut_path.is_file() and shortcut_path not in self.shortcuts_to_remove:
-                    self.shortcuts_to_remove.append(shortcut_path)
-                    
-        except Exception:
-            pass
-    
-    def _parse_desktop_file_for_removal(self, file_path: Path) -> dict:
-        """Parse .desktop file for removal purposes."""
-        config = {}
-        try:
-            with open(file_path, 'r', encoding='utf-8', errors='ignore') as f:
-                in_desktop_entry = False
-                for line in f:
-                    line = line.strip()
-                    if line == '[Desktop Entry]':
-                        in_desktop_entry = True
-                        continue
-                    if not in_desktop_entry or not line or line.startswith('#'):
-                        continue
-                    if line.startswith('[') and line.endswith(']'):
-                        break
-                    if '=' not in line:
-                        continue
-                        
-                    key, value = line.split('=', 1)
-                    key = key.strip()
-                    value = value.strip()
-                    
-                    if key in ["Name", "Exec", "Icon"]:
-                        config[key] = value
-        except IOError:
-            pass
-        return config
-    
-    def _create_safe_filename_for_removal(self, name: str) -> str:
-        """Create safe filename for removal matching creation logic."""
-        safe_chars = []
-        for char in name:
-            if char.isalnum() or char in (' ', '-', '_', '.'):
-                safe_chars.append(char)
-            else:
-                safe_chars.append('_')
-        
-        safe_name = ''.join(safe_chars).strip()
-        safe_name = ' '.join(safe_name.split())
-        safe_name = safe_name.replace(' ', '_')
-        return safe_name[:50]
-    
-    def _verify_shortcut_belongs_to_package(self, shortcut_path: Path, expected_info: dict) -> bool:
-        """Verify if a shortcut belongs to the package being removed."""
-        try:
-            shortcut_info = self._parse_desktop_file_for_removal(shortcut_path)
-            
-            # Check if Name matches
-            if expected_info.get("Name") == shortcut_info.get("Name"):
-                return True
-            
-            # Check if Exec contains similar command
-            expected_exec = expected_info.get("Exec", "")
-            shortcut_exec = shortcut_info.get("Exec", "")
-            if expected_exec and shortcut_exec:
-                # Extract command name from Exec line
-                expected_cmd = expected_exec.split()[0] if expected_exec.split() else ""
-                shortcut_cmd = shortcut_exec.split()[0] if shortcut_exec.split() else ""
-                if expected_cmd and expected_cmd == shortcut_cmd:
-                    return True
-            
-            return False
-            
-        except Exception:
-            return False
-
-    def _remove_desktop_shortcuts(self):
-        """Removes all desktop shortcuts associated with the package."""
-        if not hasattr(self, 'shortcuts_to_remove') or not self.shortcuts_to_remove:
-            self.uninstall_log_text.append("[INFO] No desktop shortcuts to remove.")
-            return
-        
-        self.uninstall_log_text.append("\n--- Removing desktop shortcuts ---")
-        removed_count = 0
-        failed_count = 0
-        
-        for shortcut_path in self.shortcuts_to_remove:
-            try:
-                if shortcut_path.is_file():
-                    shortcut_path.unlink()
-                    self.uninstall_log_text.append(f"[SUCCESS] Removed: {shortcut_path.name}")
-                    removed_count += 1
-                else:
-                    self.uninstall_log_text.append(f"[INFO] Not found: {shortcut_path.name}")
-            except Exception as e:
-                self.uninstall_log_text.append(f"[ERROR] Failed to remove {shortcut_path.name}: {e}")
-                failed_count += 1
-        
-        # Summary
-        if removed_count > 0:
-            self.uninstall_log_text.append(f"[SUCCESS] Removed {removed_count} desktop shortcut(s)")
-        if failed_count > 0:
-            self.uninstall_log_text.append(f"[WARNING] Failed to remove {failed_count} shortcut(s)")
-            
-        # Refresh desktop after removal
-        self._refresh_desktop_after_removal()
-    
-    def _refresh_desktop_after_removal(self):
-        """Refreshes desktop after shortcut removal."""
-        try:
-            # Try different desktop refresh methods
-            desktop_commands = [
-                ['kbuildsycoca5'],  # KDE
-                ['update-desktop-database', str(Path.home() / 'Desktop')],  # Generic
-                ['xdg-desktop-menu', 'forceupdate'],  # XDG
-            ]
-            
-            for cmd in desktop_commands:
-                try:
-                    subprocess.run(cmd, capture_output=True, timeout=5)
-                    break  # If one succeeds, we're done
-                except (subprocess.CalledProcessError, FileNotFoundError, subprocess.TimeoutExpired):
-                    continue
-                    
-        except Exception:
-            pass  # Not critical if desktop refresh fails
-
     def _set_all_cleanup_items(self, checked: bool):
         """Checks or unchecks all items in the leftover files list."""
         for i in range(self.leftover_files_list.count()):
@@ -1682,7 +964,6 @@ class UninstallWizard(BaseOperationWizard):
                     self.uninstall_log_text.append(f"[ERROR] Failed to remove {path_to_remove}: {e}")
 
     def do_uninstall(self): # This is called when the page changes to the progress page
-        self._prepare_for_shortcut_removal()
         self._execute_operation()
 
     def _get_worker_callbacks(self):
@@ -1694,16 +975,21 @@ class UninstallWizard(BaseOperationWizard):
                 if worker: worker.progress.emit({"type": "log", "line": "\n--- Starting package removal via C backend ---\n"})
                 
                 # Use apt remove with purge option for complete removal via C backend
-                cmd = ["sudo", "-S", get_backend_path(), "apt-op", "purge", self.pkg_name]
+                cmd = ["sudo", "-S", BACKEND_PATH, "apt-op", "purge", self.pkg_name]
                 output_lines = []
-                proc = subprocess.Popen(cmd, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, bufsize=1, encoding='utf-8')
+                proc = subprocess.Popen(cmd, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, bufsize=1, encoding='utf-8', preexec_fn=os.setsid)
+                
+                if worker: worker.set_process(proc)
+                
                 proc.stdin.write(password + '\n')
                 proc.stdin.close()
 
                 if worker: worker.progress.emit({"type": "progress", "value": 25})
 
                 while True:
-                    if worker and not worker.is_running(): proc.terminate(); break
+                    if worker and not worker.is_running():
+                        return -15, "".join(output_lines), []
+                        
                     line = proc.stdout.readline()
                     if not line: break
                     output_lines.append(line)
@@ -1712,14 +998,19 @@ class UninstallWizard(BaseOperationWizard):
                 proc.wait()
                 
                 # Clean up orphaned dependencies via C backend
-                if worker: worker.progress.emit({"type": "log", "line": "\n--- Cleaning up orphaned dependencies ---\n"})
-                cleanup_cmd = ["sudo", "-S", get_backend_path(), "apt", "autoremove", "-y"]
-                cleanup_proc = subprocess.Popen(cleanup_cmd, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, bufsize=1)
+                if worker: worker.progress.emit({"type": "log", "line": "\n--- Cleaning up orphaned dependencies via C backend ---\n"})
+                cleanup_cmd = ["sudo", "-S", BACKEND_PATH, "apt-autoremove"]
+                cleanup_proc = subprocess.Popen(cleanup_cmd, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, bufsize=1, preexec_fn=os.setsid)
+                
+                if worker: worker.set_process(cleanup_proc)
+                
                 cleanup_proc.stdin.write(password + '\n')
                 cleanup_proc.stdin.close()
                 
                 while True:
-                    if worker and not worker.is_running(): cleanup_proc.terminate(); break
+                    if worker and not worker.is_running():
+                        return -15, "".join(output_lines), []
+                        
                     line = cleanup_proc.stdout.readline()
                     if not line: break
                     output_lines.append(line)
@@ -1729,26 +1020,46 @@ class UninstallWizard(BaseOperationWizard):
                 
                 # --- Scan for leftover files after successful purge ---
                 if proc.returncode == 0:
-                    if worker: worker.progress.emit({"type": "log", "line": "\n--- Scanning for leftover user configuration files ---\n"})
+                    if worker: worker.progress.emit({"type": "log", "line": "\n--- Scanning for leftover user configuration and data files ---\n"})
                     
                     home_dir = Path.home()
                     # Common locations for user-specific config/data
                     search_dirs = [
                         home_dir / ".config",
                         home_dir / ".local" / "share",
-                        home_dir / ".cache"
+                        home_dir / ".cache",
+                        home_dir, # For dotfiles like .bashrc
                     ]
                     
-                    # Create a few variations of the package name to search for
-                    pkg_name_variations = {self.pkg_name, self.pkg_name.lower(), self.pkg_name.replace('-', '')}
+                    # --- Improved Name Variation Generation ---
+                    # Create a comprehensive set of name variations to search for.
+                    base_name = self.pkg_name.lower()
+                    pkg_name_variations = {
+                        base_name,
+                        base_name.replace('-', ''),
+                        base_name.replace('-', '_'),
+                        base_name.title().replace('-', ''),
+                        base_name.title()
+                    }
                     
                     for search_dir in search_dirs:
                         if search_dir.is_dir():
-                            for variation in pkg_name_variations:
-                                potential_path = search_dir / variation
-                                if potential_path.exists() and potential_path not in leftover_files:
-                                    leftover_files.append(potential_path)
-                                    if worker: worker.progress.emit({"type": "log", "line": f"[INFO] Found potential leftover: {potential_path}\n"})
+                            try:
+                                for item in search_dir.iterdir():
+                                    item_name_lower = item.name.lower()
+                                    # For home dir, only check for dotfiles
+                                    if search_dir == home_dir and not item.name.startswith('.'):
+                                        continue
+                                    
+                                    # Check if any variation is present in the item's name
+                                    for variation in pkg_name_variations:
+                                        if variation in item_name_lower:
+                                            if item not in leftover_files:
+                                                leftover_files.append(item)
+                                                if worker: worker.progress.emit({"type": "log", "line": f"[INFO] Found potential leftover: {item}\n"})
+                                            break # Move to the next item once a match is found
+                            except OSError as e:
+                                if worker: worker.progress.emit({"type": "log", "line": f"[WARNING] Could not scan {search_dir}: {e}\n"})
                 
                 return proc.returncode, "".join(output_lines), leftover_files
                 
@@ -1770,61 +1081,327 @@ class UninstallWizard(BaseOperationWizard):
             elif data.get("type") == "progress":
                 self.progress.setValue(data["value"])
 
-        def done(result):
-            if isinstance(result, Exception):
-                QMessageBox.warning(self, APP_NAME, f"Uninstallation failed with an unexpected error: {result}")
-                self.button(QWizard.BackButton).setEnabled(True)
-                return
+        return uninstall, on_progress, self._handle_worker_completion
 
-            rc, output, leftover_files = result
-            # --- New Enhanced Error Handling ---
-            # Check for specific errors from our C backend first.
-            backend_error_prefix = "[NANO_BACKEND_ERROR]"
-            backend_error_line = next((line for line in output.splitlines() if line.startswith(backend_error_prefix)), None)
+    def _on_operation_success(self, output: str, leftover_files: list):
+        """Handles successful uninstallation, shortcut removal, and leftover file scan."""
+        remove_desktop_shortcuts(self.pkg_name, self.uninstall_log_text.append)
+        self.found_leftover_files = leftover_files
+        
+        if self.found_leftover_files:
+            # Populate the cleanup page
+            for path in self.found_leftover_files:
+                item = QListWidgetItem(f"Found: {path}")
+                item.setData(Qt.UserRole, str(path))
+                item.setCheckState(Qt.Checked) # Default to checked
+                self.leftover_files_list.addItem(item)
+        
+        self.next() # Go to cleanup page or success page
 
-            if backend_error_line:
-                # We have a specific error from our C code.
-                error_message = backend_error_line.replace(backend_error_prefix, "").strip()
-                QMessageBox.critical(self, "Backend Error", f"A critical error occurred in the backend process:\n\n{error_message}\n\n(Code: {rc})")
-                self.progress.setStyleSheet("QProgressBar::chunk { background-color: red; }")
-                self.button(QWizard.BackButton).setEnabled(True)
-                return
-            # --- End of New Error Handling ---
+# -----------------------
+# Update Cache wizard
+# -----------------------
+class UpdateCacheWizard(BaseOperationWizard):
+    def __init__(self, parent=None):
+        # We pass a generic name for the BaseOperationWizard
+        super().__init__("package cache", parent)
+        self.setWindowTitle("Update Package Cache")
 
-            # Phrases that indicate a password error from different sudo versions/configs
-            password_error_phrases = [
-                "sorry, try again",
-                "authentication failed",
-                "incorrect password",
-                "incorrect authentication",
-            ]
-            is_password_error = rc != 0 and any(phrase in output.lower() for phrase in password_error_phrases)
+        # --- Page 1: Confirmation ---
+        p1 = QWizardPage()
+        p1.setTitle("Ready to Update Cache")
+        p1.setSubTitle("This will refresh the list of available packages from all configured sources.")
+        l1 = QVBoxLayout(p1)
 
-            if rc == 0:
-                self.progress.setValue(100)
-                self._remove_desktop_shortcuts()
-                self.found_leftover_files = leftover_files
+        icon_label = QLabel()
+        icon_label.setPixmap(QIcon.fromTheme("system-software-update").pixmap(64, 64))
+        icon_label.setAlignment(Qt.AlignCenter)
+
+        label = QLabel("You are about to update the package cache (apt update).\n\nThis requires an internet connection.")
+        label.setWordWrap(True)
+        label.setAlignment(Qt.AlignCenter)
+
+        l1.addStretch(1)
+        l1.addWidget(icon_label)
+        l1.addSpacing(10)
+        l1.addWidget(label)
+        l1.addStretch(2)
+        self.addPage(p1)
+
+        # --- Page 2: Updating ---
+        p2 = self._create_progress_page("Updating", "Please wait while the package cache is being updated.")
+        self.update_log_text = self.log_text # Alias
+        self.addPage(p2)
+
+        # --- Page 3: Success ---
+        p3 = QWizardPage()
+        p3.setFinalPage(True)
+        p3.setTitle("Update Complete")
+        p3.setSubTitle("The package cache has been successfully updated.")
+        l3 = QVBoxLayout(p3)
+        success_icon = QLabel()
+        success_icon.setPixmap(QIcon.fromTheme("emblem-ok").pixmap(64, 64))
+        success_icon.setAlignment(Qt.AlignCenter)
+        success_label = QLabel("The package cache was updated successfully.")
+        success_label.setAlignment(Qt.AlignCenter)
+        l3.addStretch()
+        l3.addWidget(success_icon)
+        l3.addSpacing(10)
+        l3.addWidget(success_label)
+        l3.addStretch()
+        self.addPage(p3)
+
+        self.currentIdChanged.connect(self.on_page_changed)
+
+    def _get_operation_verb(self):
+        return "update package lists"
+
+    @pyqtSlot(int)
+    def on_page_changed(self, idx):
+        if idx == 1: # Progress page
+            self._execute_operation()
+
+        page = self.currentPage()
+        if page and page.isFinalPage():
+            self.button(QWizard.BackButton).hide()
+
+    def _get_worker_callbacks(self):
+        def update_cache(worker=None, password=None):
+            try:
+                if worker: worker.progress.emit({"type": "log", "line": "--- Starting package cache update via C backend ---\n"})
+                cmd = ["sudo", "-S", BACKEND_PATH, "apt-update"]
                 
-                if self.found_leftover_files:
-                    # Populate the cleanup page
-                    for path in self.found_leftover_files:
-                        item = QListWidgetItem(f"Found: {path}")
-                        item.setData(Qt.UserRole, str(path))
-                        item.setCheckState(Qt.Checked) # Default to checked
-                        self.leftover_files_list.addItem(item)
+                output_lines = []
+                proc = subprocess.Popen(cmd, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, bufsize=1, encoding='utf-8', preexec_fn=os.setsid)
                 
-                self.next() # Go to cleanup page or success page
-            elif is_password_error:
-                if self._used_saved_password:
-                    self.uninstall_log_text.clear()
-                    self.uninstall_log_text.append("[ERROR] Saved password was incorrect or has expired. Please enter it manually.")
-                    self.settings.save_password("")
-                    self.settings.set_setting("auto_password_enabled", "false")
+                if worker: worker.set_process(proc)
+                
+                proc.stdin.write(password + '\n')
+                proc.stdin.close()
 
-                self._ask_password_and_execute(is_retry=True)
-            else:
-                self.progress.setStyleSheet("QProgressBar::chunk { background-color: red; }")
-                QMessageBox.warning(self, APP_NAME, f"Uninstallation failed with an error (code: {rc}). See log for details.")
-                self.button(QWizard.BackButton).setEnabled(True)
+                while True:
+                    if worker and not worker.is_running():
+                        return -15, "".join(output_lines)
+                        
+                    line = proc.stdout.readline()
+                    if not line: break
+                    output_lines.append(line)
+                    if worker: worker.progress.emit({"type": "log", "line": line})
 
-        return uninstall, on_progress, done
+                proc.wait()
+                return proc.returncode, "".join(output_lines)
+            except Exception as e:
+                return -1, str(e)
+
+        def on_progress(data):
+            line = data.get("line", "").strip()
+            if line:
+                self.update_log_text.append(line)
+                self.update_log_text.verticalScrollBar().setValue(self.update_log_text.verticalScrollBar().maximum())
+
+                # --- Improved Progress Parsing for `apt update` ---
+                # Phase 1: Downloading from repositories (maps to 0-90%)
+                # Matches lines like "Get:1", "Hit:2", etc.
+                match = re.match(r'^(Get|Hit):\d+', line)
+                if match:
+                    # Increment progress for each repository line, but don't go past 90
+                    self.progress.setValue(min(90, self.progress.value() + 4))
+
+                # Phase 2: Reading package lists (final step, 100%)
+                elif "Reading package lists..." in line:
+                    self.progress.setValue(100)
+
+        return update_cache, on_progress, self._handle_worker_completion
+
+# -----------------------
+# System Upgrade wizard
+# -----------------------
+class UpgradeSystemWizard(BaseOperationWizard):
+    def __init__(self, parent=None):
+        super().__init__("system packages", parent)
+        self.setWindowTitle("System Upgrade")
+
+        # --- Page 1: Confirmation ---
+        p1 = QWizardPage()
+        p1.setTitle("Ready to Upgrade System")
+        p1.setSubTitle("This will upgrade all installed packages to their newest versions.")
+        l1 = QVBoxLayout(p1)
+
+        icon_label = QLabel()
+        icon_label.setPixmap(QIcon.fromTheme("system-software-update").pixmap(64, 64))
+        icon_label.setAlignment(Qt.AlignCenter)
+
+        label = QLabel("You are about to perform a full system upgrade (apt upgrade).\n\n" 
+                       "This may take a long time and requires a stable internet connection.\n" 
+                       "Please save all your work before proceeding.")
+        label.setWordWrap(True)
+        label.setAlignment(Qt.AlignCenter)
+        label.setStyleSheet("font-weight: bold;")
+
+        l1.addStretch(1)
+        l1.addWidget(icon_label)
+        l1.addSpacing(10)
+        l1.addWidget(label)
+        l1.addStretch(2)
+        self.addPage(p1)
+
+        # --- Page 2: Upgrading ---
+        p2 = self._create_progress_page("Upgrading System", "Please wait while packages are being downloaded and installed.")
+        self.upgrade_log_text = self.log_text # Alias
+        self.addPage(p2)
+
+        # --- Page 3: Success ---
+        p3 = QWizardPage()
+        p3.setFinalPage(True)
+        p3.setTitle("Upgrade Complete")
+        p3.setSubTitle("Your system has been successfully upgraded.")
+        l3 = QVBoxLayout(p3)
+        success_icon = QLabel()
+        success_icon.setPixmap(QIcon.fromTheme("emblem-ok").pixmap(64, 64))
+        success_icon.setAlignment(Qt.AlignCenter)
+        success_label = QLabel("The system upgrade was completed successfully.")
+        success_label.setAlignment(Qt.AlignCenter)
+        l3.addStretch()
+        l3.addWidget(success_icon)
+        l3.addSpacing(10)
+        l3.addWidget(success_label)
+        l3.addStretch()
+        self.addPage(p3)
+
+        self.currentIdChanged.connect(self.on_page_changed)
+
+    def _get_operation_verb(self):
+        return "upgrade system packages"
+
+    @pyqtSlot(int)
+    def on_page_changed(self, idx):
+        if idx == 1: # Progress page
+            self._execute_operation()
+
+        page = self.currentPage()
+        if page and page.isFinalPage():
+            self.button(QWizard.BackButton).hide()
+
+    def _get_worker_callbacks(self):
+        def upgrade_system(worker=None, password=None):
+            try:
+                if worker: worker.progress.emit({"type": "log", "line": "--- Starting system upgrade via C backend ---\n"})
+                cmd = ["sudo", "-S", BACKEND_PATH, "apt-upgrade"]
+                
+                output_lines = []
+                proc = subprocess.Popen(cmd, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, bufsize=1, encoding='utf-8', preexec_fn=os.setsid)
+                
+                if worker: worker.set_process(proc)
+                
+                proc.stdin.write(password + '\n')
+                proc.stdin.close()
+
+                while True:
+                    if worker and not worker.is_running():
+                        return -15, "".join(output_lines)
+                        
+                    line = proc.stdout.readline()
+                    if not line: break
+                    output_lines.append(line)
+                    if worker: worker.progress.emit({"type": "log", "line": line})
+
+                proc.wait()
+                return proc.returncode, "".join(output_lines)
+            except Exception as e:
+                return -1, str(e)
+
+        def on_progress(data):
+            line = data.get("line", "").strip()
+            if line:
+                self.upgrade_log_text.append(line)
+                self.upgrade_log_text.verticalScrollBar().setValue(self.upgrade_log_text.verticalScrollBar().maximum())
+
+                # --- Progress Parsing for `apt upgrade` ---
+                # Phase 1: Downloading packages (maps to 0-50% of progress bar)
+                # Matches lines like "Progress: [ 12%]"
+                dl_match = re.search(r'Progress:\s*\[\s*(\d+)%\s*\]', line)
+                if dl_match:
+                    progress_val = int(dl_match.group(1)) * 0.5 # Scale to 0-50
+                    self.progress.setValue(int(progress_val))
+                    return
+
+                # Phase 2: Unpacking/Installing from database (maps to 50-100% of progress bar)
+                install_match = re.search(r'\(Reading database\s*\.\.\.\s*(\d+)%\)', line)
+                if install_match:
+                    progress_val = 50 + (int(install_match.group(1)) * 0.5) # Scale to 50-100
+                    self.progress.setValue(int(progress_val))
+        return upgrade_system, on_progress, self._handle_worker_completion
+# -----------------------
+# Maintenance wizard
+# -----------------------
+class MaintenanceWizard(BaseOperationWizard):
+    """A generic wizard for running simple backend maintenance commands."""
+    def __init__(self, operation_name, backend_command, subtitle, parent=None):
+        super().__init__(operation_name, parent)
+        self.operation_name = operation_name
+        self.backend_command = backend_command
+        self.setWindowTitle(operation_name)
+        self._operation_started = False # New flag to prevent re-running on 'Back'
+
+        # --- Confirmation Page ---
+        p1 = QWizardPage()
+        p1.setTitle(f"Ready to {operation_name}")
+        p1.setSubTitle(subtitle)
+        l1 = QVBoxLayout(p1)
+        l1.addWidget(QLabel(f"Click Next to start the '{operation_name}' process."))
+        self.addPage(p1)
+
+        # --- Progress Page ---
+        p2 = self._create_progress_page(f"Running {operation_name}", "Please wait...")
+        self.addPage(p2)
+
+        # --- Success Page ---
+        p3 = QWizardPage()
+        p3.setFinalPage(True)
+        p3.setTitle("Operation Complete")
+        l3 = QVBoxLayout(p3)
+        l3.addWidget(QLabel(f"The '{operation_name}' process finished successfully."))
+        self.addPage(p3)
+
+        self.currentIdChanged.connect(self.on_page_changed)
+
+    def on_page_changed(self, idx):
+        if idx == 1 and not self._operation_started:
+            self._operation_started = True
+            self._execute_operation()
+
+    def _get_operation_verb(self):
+        return f"run '{self.operation_name}'"
+
+    def _get_worker_callbacks(self):
+        # Reuse the robust install worker, but change the command
+        def maintenance_worker(worker=None, password=None):
+            cmd = ["sudo", "-S", BACKEND_PATH, self.backend_command]
+            proc = subprocess.Popen(cmd, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, bufsize=1, encoding='utf-8', preexec_fn=os.setsid)
+            
+            if worker: worker.set_process(proc)
+            
+            proc.stdin.write(password + '\n')
+            proc.stdin.close()
+            output = []
+            
+            while True:
+                if worker and not worker.is_running():
+                    return -15, "".join(output)
+                    
+                line = proc.stdout.readline()
+                if not line: break
+                output.append(line)
+                if worker: worker.progress.emit({"type": "log", "line": line})
+                
+            proc.wait()
+            return proc.returncode, "".join(output)
+
+        def on_progress(data):
+            """Generic progress handler for simple log output."""
+            line = data.get("line", "")
+            if line:
+                self.log_text.append(line.strip())
+                self.log_text.verticalScrollBar().setValue(self.log_text.verticalScrollBar().maximum())
+
+        return maintenance_worker, on_progress, self._handle_worker_completion

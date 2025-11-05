@@ -41,6 +41,45 @@ def simple_xor_decrypt(data: str, key: bytes) -> str:
     return decrypted_bytes.decode('utf-8')
 
 
+def load_encrypted_config(filepath: str, key: bytes) -> dict:
+    """
+    Reads, decrypts, and executes the content of an encrypted config file.
+    Returns a dictionary of the executed variables.
+    """
+    try:
+        with open(filepath, 'r') as f:
+            encrypted_content = f.read()
+    except FileNotFoundError:
+        # If the encrypted file is missing, we can't load config.
+        # This is a critical error for the application.
+        raise RuntimeError(f"Encrypted config file not found: {filepath}")
+
+    decrypted_content = decrypt_data(encrypted_content, key)
+
+    if decrypted_content is None:
+        raise RuntimeError("Failed to decrypt config file. Key may be wrong or file tampered.")
+
+    # Execute the decrypted content in a new dictionary to capture variables
+    config_vars = {}
+    try:
+        # The config file imports 'os' and 'SettingsManager', so we need to make them available
+        # in the execution environment.
+        import os
+        from nano_installer.settings import SettingsManager
+        exec(decrypted_content, {'os': os, 'SettingsManager': SettingsManager}, config_vars)
+    except Exception as e:
+        raise RuntimeError(f"Error executing decrypted config content: {e}")
+
+    # Filter out built-in variables from the exec environment
+    # We only want the variables defined in the config file.
+    return {k: v for k, v in config_vars.items() if not k.startswith('__') and k not in ['os', 'SettingsManager']}
+
+
+# Key for encrypting the config file. This key is hardcoded for this application's
+# security requirement to make the config unreadable without the application.
+# NOTE: This key is NOT for the VT API key itself, but for the config file content.
+CONFIG_KEY = b'qDrWbq7jN_oNM0mYjF1DZt7RMsOXpHqFjvsjD5529y8='
+
 # A hardcoded key for demonstration. In a real application, this should be
 # stored securely (e.g., in a config file with strict permissions, environment variable,
 # or a system keyring) and not in the source code.
