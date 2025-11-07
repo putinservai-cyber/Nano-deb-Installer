@@ -7,11 +7,16 @@ The Nano Installer provides a secure and feature-rich graphical interface for in
 ![Nano Installer Screenshot](release/Screenshot_20251107_081827.png)
 
 ## Features:
-*   **Secure Package Installation:** Safely install .deb packages with integrated security checks.
-*   **Dependency Management:** Automatically identifies and helps resolve missing package dependencies.
-*   **Graphical User Interface (GUI):** An intuitive and easy-to-use interface for all operations.
-*   **Package Updates:** Keep your installed Debian packages up-to-date.
-*   **Local Package Management:** Manage your local .deb files efficiently.
+
+**Security scanning with VirusTotal integration**
+
+**Dependency management and automatic installation**
+
+**KDE Plasma desktop shortcut creation**
+
+**Safe installation and uninstallation**
+
+**Native KDE theme integration**
 
 ## Installation
 
