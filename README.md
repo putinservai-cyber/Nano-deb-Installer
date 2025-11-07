@@ -4,6 +4,8 @@ Copyright (c) 2025 putinservai-cyber. All rights reserved. Unauthorized reuse or
 
 The Nano Installer provides a secure and feature-rich graphical interface for installing, updating, and managing local Debian packages (.deb files). It includes features like security scanning and dependency management.
 
+![Nano Installer Screenshot](release/Screenshot_20251107_081827.png)
+
 ## Features:
 *   **Secure Package Installation:** Safely install .deb packages with integrated security checks.
 *   **Dependency Management:** Automatically identifies and helps resolve missing package dependencies.
