@@ -1,17 +1,19 @@
-Copyright (c) 2025 putinservai
+Community Edition License (CEL) v1.0
+(C) 2025 <Putin Servai>
 
-All Rights Reserved.
+This software is released as a Community Edition.
 
-This project and its source code (the “Software”) are the exclusive intellectual property of putinservai.
+Permission is granted to any individual to use this software freely for personal,
+educational, or community purposes, without modification.
 
-Permission is granted for **viewing and contributing improvements** to this repository: https://github.com/putinservai-cyber/Nano-deb-Installer  
-provided that such contributions are submitted via pull-requests and accepted by the project maintainer.
+You may:
+ - Use the software on any compatible system.
+ - Share the original installer or binaries in unmodified form.
 
-**Prohibited Actions:**  
-– Redistribution, publication, sublicensing, or release of the Software (in whole or part) in any other form or under any other license.  
-– Creation of derivative works or modifications of the Software for distribution or release without explicit written consent from the author.  
-– Commercial or non-commercial use of the Software outside of this repository without prior written authorization.
+You may NOT:
+ - Modify, edit, reverse-engineer, or redistribute altered versions.
+ - Use this software for commercial or paid distribution without written permission.
+ - Claim authorship or ownership of this project.
 
-Any violation of these terms constitutes copyright infringement and may lead to legal action.
-
-Contact: putinservai@gmail.com
+This software is provided "AS IS", without warranty of any kind.
+The author shall not be held liable for any damage arising from its use.
