@@ -11,7 +11,11 @@ Vcs-Git:
 
 Package: nano-installer
 Architecture: all
-Depends: ${misc:Depends}, ${python3:Depends}, python3-pyqt5, kdialog, libqt5svg5
+<<<<<<< HEAD
+Depends: ${misc:Depends}, ${python3:Depends}, python3-pyqt6, kdialog, libqt6svg6
+=======
+Depends: ${misc:Depends}, ${python3:Depends}, python3-pyqt6, kdialog, libqt6svg6
+>>>>>>> 3ca60c4 (Add untracked files)
 Description: Advanced .deb Package Installer with KDE Integration
  The Nano Installer provides a secure and feature-rich graphical interface
  for installing, updating, and managing local Debian packages (.deb files).

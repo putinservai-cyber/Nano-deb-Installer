@@ -1,6 +1,12 @@
-from PyQt5.QtCore import Qt, pyqtSignal
-from PyQt5.QtGui import QIcon, QPixmap
-from PyQt5.QtWidgets import (
+<<<<<<< HEAD
+from PyQt6.QtCore import Qt, pyqtSignal
+from PyQt6.QtGui import QIcon, QPixmap
+from PyQt6.QtWidgets import (
+=======
+from PyQt6.QtCore import Qt, pyqtSignal
+from PyQt6.QtGui import QIcon, QPixmap
+from PyQt6.QtWidgets import (
+>>>>>>> 3ca60c4 (Add untracked files)
     QLabel,
     QPushButton,
     QVBoxLayout,
@@ -39,16 +45,28 @@ class DonationPage(QWidget):
         subtitle.setWordWrap(True)
         main_layout.addWidget(subtitle)
 
-        main_layout.addWidget(QFrame(frameShape=QFrame.HLine, frameShadow=QFrame.Sunken))
+<<<<<<< HEAD
+        main_layout.addWidget(QFrame(frameShape=QFrame.Shape.HLine, frameShadow=QFrame.Shadow.Sunken))
+=======
+        main_layout.addWidget(QFrame(frameShape=QFrame.Shape.HLine, frameShadow=QFrame.Shadow.Sunken))
+>>>>>>> 3ca60c4 (Add untracked files)
 
         # --- Donation Options ---
         scroll_area = QScrollArea()
         scroll_area.setWidgetResizable(True)
-        scroll_area.setFrameShape(QFrame.NoFrame)
+<<<<<<< HEAD
+        scroll_area.setFrameShape(QFrame.Shape.NoFrame)
         
         scroll_content = QWidget()
         donation_layout = QVBoxLayout(scroll_content)
-        donation_layout.setAlignment(Qt.AlignTop)
+        donation_layout.setAlignment(Qt.AlignmentFlag.AlignTop)
+=======
+        scroll_area.setFrameShape(QFrame.Shape.NoFrame)
+        
+        scroll_content = QWidget()
+        donation_layout = QVBoxLayout(scroll_content)
+        donation_layout.setAlignment(Qt.AlignmentFlag.AlignTop)
+>>>>>>> 3ca60c4 (Add untracked files)
 
         # GPay Donation Option
         # Use a QHBoxLayout with spacers to center the content horizontally
@@ -60,7 +78,11 @@ class DonationPage(QWidget):
         gpay_layout = QVBoxLayout(gpay_group)
         
         gpay_label = QLabel("Scan the QR code below to donate via GPay or any UPI app:")
-        gpay_label.setAlignment(Qt.AlignCenter)
+<<<<<<< HEAD
+        gpay_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+=======
+        gpay_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+>>>>>>> 3ca60c4 (Add untracked files)
         gpay_label.setWordWrap(True)
         gpay_layout.addWidget(gpay_label)
         
@@ -71,10 +93,17 @@ class DonationPage(QWidget):
         pixmap = QPixmap(asset_path)
         if not pixmap.isNull():
             # Scale pixmap to a fixed size for a clean look
-            scaled_pixmap = pixmap.scaled(200, 200, Qt.KeepAspectRatio, Qt.SmoothTransformation)
+<<<<<<< HEAD
+            scaled_pixmap = pixmap.scaled(200, 200, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation)
             qr_code_label.setFixedSize(200, 200)
             qr_code_label.setPixmap(scaled_pixmap)
-            qr_code_label.setAlignment(Qt.AlignCenter)
+            qr_code_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+=======
+            scaled_pixmap = pixmap.scaled(200, 200, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation)
+            qr_code_label.setFixedSize(200, 200)
+            qr_code_label.setPixmap(scaled_pixmap)
+            qr_code_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+>>>>>>> 3ca60c4 (Add untracked files)
             gpay_layout.addWidget(qr_code_label)
         else:
             gpay_layout.addWidget(QLabel(f"Error: GPay QR code image not found at {asset_path}"))
