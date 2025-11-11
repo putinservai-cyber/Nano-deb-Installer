@@ -7,9 +7,9 @@ if __name__ == "__main__":
     sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from cryptography.fernet import Fernet, InvalidToken
-from PyQt5.QtCore import QSettings, Qt, pyqtSignal
-from PyQt5.QtGui import QIcon
-from PyQt5.QtWidgets import (
+from PyQt6.QtCore import QSettings, Qt, pyqtSignal
+from PyQt6.QtGui import QIcon
+from PyQt6.QtWidgets import (
     QCheckBox,
     QGroupBox,
     QHBoxLayout,
@@ -23,11 +23,14 @@ from PyQt5.QtWidgets import (
     QListWidgetItem,
     QStackedWidget,
     QFileDialog,
+    QFrame,
+    QScrollArea,
     QLineEdit,
+    QTabWidget,
 )
 
 # Import AuthenticationDialog from gui_components (will be created next)
-from .gui_components import AuthenticationDialog
+from nano_installer.gui_components import AuthenticationDialog
 from .donation_page import DonationPage # Keep for instantiation
 from .report_page import ReportPage # Keep for instantiation
 
@@ -112,7 +115,7 @@ class GeneralSettingsWidget(QWidget):
 
     def _init_ui(self):
         layout = QVBoxLayout(self)
-        layout.setAlignment(Qt.AlignTop)
+        layout.setAlignment(Qt.AlignmentFlag.AlignTop)
         layout.setContentsMargins(0, 0, 0, 0)
 
         # --- Verbose Logging Section ---
@@ -187,7 +190,7 @@ class GeneralSettingsWidget(QWidget):
             self,
             "Select Default Download Directory",
             current_path,
-            QFileDialog.ShowDirsOnly | QFileDialog.DontResolveSymlinks
+            QFileDialog.Option.ShowDirsOnly | QFileDialog.Option.DontResolveSymlinks
         )
         if directory:
             self.settings_manager.set_default_download_directory(directory)
@@ -219,7 +222,7 @@ class InstallationSettingsWidget(QWidget):
 
     def _init_ui(self):
         layout = QVBoxLayout(self)
-        layout.setAlignment(Qt.AlignTop)
+        layout.setAlignment(Qt.AlignmentFlag.AlignTop)
         layout.setContentsMargins(0, 0, 0, 0)
 
         # --- Extract Mode Section ---
@@ -227,6 +230,10 @@ class InstallationSettingsWidget(QWidget):
         extract_layout = QVBoxLayout()
 
         self.cb_extract_mode = QCheckBox("Enable 'Install and Extract' mode")
+        self.cb_extract_mode.setToolTip(
+            "Warning: This is an experimental feature.\n"
+            "It may not work as expected and might not clean up extracted files perfectly upon uninstallation."
+        )
         extract_layout.addWidget(self.cb_extract_mode)
 
         extract_label = QLabel(
@@ -245,6 +252,84 @@ class InstallationSettingsWidget(QWidget):
         shortcut_layout = QVBoxLayout()
 
         self.cb_create_shortcut = QCheckBox("Enable desktop shortcut creation feature")
+        self.cb_create_shortcut.setToolTip(
+            "Warning: This is an experimental feature.\n"
+            "It may not work correctly on all desktop environments and might create duplicate or non-functional shortcuts."
+        )
+        shortcut_layout.addWidget(self.cb_create_shortcut)
+
+        shortcut_label = QLabel(
+            "<b>Experimental:</b> When enabled, the installation wizard will offer to create a "
+            "desktop shortcut for the application."
+        )
+        shortcut_label.setWordWrap(True)
+        shortcut_layout.addWidget(shortcut_label)
+
+        shortcut_group.setLayout(shortcut_layout)
+        layout.addWidget(shortcut_group)
+
+        layout.addStretch()
+
+        # Connections
+        self.cb_extract_mode.toggled.connect(self.on_extract_mode_toggled)
+        self.cb_create_shortcut.toggled.connect(self.on_create_shortcut_toggled)
+
+    def _load_settings(self):
+        is_extract_mode = self.settings_manager.get_setting("install_and_extract_enabled", "false") == "true"
+        self.cb_extract_mode.setChecked(is_extract_mode)
+        is_shortcut_mode = self.settings_manager.get_setting("create_desktop_shortcut_enabled", "false") == "true"
+        self.cb_create_shortcut.setChecked(is_shortcut_mode)
+
+    def on_extract_mode_toggled(self, checked):
+        self.settings_manager.set_setting("install_and_extract_enabled", "true" if checked else "false")
+
+    def on_create_shortcut_toggled(self, checked):
+        self.settings_manager.set_setting("create_desktop_shortcut_enabled", "true" if checked else "false")
+
+
+class ExperimentalSettingsWidget(QWidget):
+    def __init__(self, settings_manager, parent=None):
+        super().__init__(parent)
+        self.settings_manager = settings_manager
+        self._init_ui()
+        self._load_settings()
+
+    def _init_ui(self):
+        layout = QVBoxLayout(self)
+        layout.setAlignment(Qt.AlignmentFlag.AlignTop)
+        layout.setContentsMargins(0, 0, 0, 0)
+
+        # --- Extract Mode Section ---
+        extract_group = QGroupBox("Installation Behavior")
+        extract_layout = QVBoxLayout()
+
+        self.cb_extract_mode = QCheckBox("Enable 'Install and Extract' mode")
+        self.cb_extract_mode.setToolTip(
+            "Warning: This is an experimental feature.\n"
+            "It may not work as expected and might not clean up extracted files perfectly upon uninstallation."
+        )
+        extract_layout.addWidget(self.cb_extract_mode)
+
+        extract_label = QLabel(
+            "<b>Experimental:</b> When enabled, the wizard will first install the package "
+            "and then extract its contents to a directory you choose."
+        )
+        extract_label.setWordWrap(True)
+        extract_layout.addWidget(extract_label)
+
+        extract_group.setLayout(extract_layout)
+        layout.addWidget(extract_group)
+        layout.addSpacing(15)
+
+        # --- Desktop Shortcut Section (Experimental) ---
+        shortcut_group = QGroupBox("Desktop Integration (Experimental)")
+        shortcut_layout = QVBoxLayout()
+
+        self.cb_create_shortcut = QCheckBox("Enable desktop shortcut creation feature")
+        self.cb_create_shortcut.setToolTip(
+            "Warning: This is an experimental feature.\n"
+            "It may not work correctly on all desktop environments and might create duplicate or non-functional shortcuts."
+        )
         shortcut_layout.addWidget(self.cb_create_shortcut)
 
         shortcut_label = QLabel(
@@ -285,7 +370,7 @@ class SecuritySettingsWidget(QWidget):
 
     def _init_ui(self):
         layout = QVBoxLayout(self)
-        layout.setAlignment(Qt.AlignTop)
+        layout.setAlignment(Qt.AlignmentFlag.AlignTop)
         layout.setContentsMargins(0, 0, 0, 0)
 
         # --- Auto Password Section ---
@@ -349,9 +434,10 @@ class SettingsPage(QWidget):
     # Define section indices for external navigation
     SECTION_GENERAL = 0
     SECTION_INSTALLATION = 1
-    SECTION_SECURITY = 2
-    SECTION_DONATE = 3
-    SECTION_REPORT = 4
+    SECTION_EXPERIMENTAL = 2
+    SECTION_SECURITY = 3
+    SECTION_DONATE = 4
+    SECTION_REPORT = 5
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -360,73 +446,55 @@ class SettingsPage(QWidget):
 
     def _init_ui(self):
         main_layout = QVBoxLayout(self)
-        main_layout.setContentsMargins(15, 15, 15, 15)
+        main_layout.setContentsMargins(10, 10, 10, 10)
 
-        # Title
-        title = QLabel("Application Settings")
-        font = title.font()
-        font.setPointSize(16)
-        font.setBold(True)
-        title.setFont(font)
-        main_layout.addWidget(title)
-        main_layout.addSpacing(15)
-        
-        # Content Area (Sidebar + Stacked Widgets)
-        content_layout = QHBoxLayout()
+        # Use QTabWidget for top menu navigation
+        self.tab_widget = QTabWidget()
 
-        # 1. Navigation List (Sidebar)
-        self.nav_list = QListWidget()
-        self.nav_list.setMaximumWidth(180)
-        self.nav_list.setMinimumWidth(150)
-
-        item_general = QListWidgetItem(QIcon.fromTheme("preferences-system"), "General")
-        self.nav_list.addItem(item_general)
-        item_installation = QListWidgetItem(QIcon.fromTheme("system-software-install"), "Installation")
-        self.nav_list.addItem(item_installation)
-        item_security = QListWidgetItem(QIcon.fromTheme("dialog-password"), "Security")
-        self.nav_list.addItem(item_security)
-        item_donate = QListWidgetItem(QIcon.fromTheme("help-donate"), "Donate")
-        self.nav_list.addItem(item_donate)
-        item_report = QListWidgetItem(QIcon.fromTheme("tools-report-bug"), "Report a Bug")
-        self.nav_list.addItem(item_report)
-
-        self.nav_list.setCurrentRow(0) # Default to General
-        content_layout.addWidget(self.nav_list)
-
-        # 2. Settings Stack
-        self.settings_stack = QStackedWidget()
-
-        # Initialize section widgets
+        # Initialize section widgets and add them to scroll areas
         self.general_widget = GeneralSettingsWidget(self.settings_manager)
         self.installation_widget = InstallationSettingsWidget(self.settings_manager)
+        self.experimental_widget = ExperimentalSettingsWidget(self.settings_manager)
         self.security_widget = SecuritySettingsWidget(self.settings_manager)
         self.donation_page = DonationPage()
         self.report_page = ReportPage()
 
-        self.settings_stack.addWidget(self.general_widget)
-        self.settings_stack.addWidget(self.installation_widget)
-        self.settings_stack.addWidget(self.security_widget)
-        self.settings_stack.addWidget(self.donation_page)
-        self.settings_stack.addWidget(self.report_page)
+        # Add widgets to tabs with scroll areas
+        self.tab_widget.addTab(self._create_scrollable_area(self.general_widget), QIcon.fromTheme("preferences-system"), "General")
+        self.tab_widget.addTab(self._create_scrollable_area(self.installation_widget), QIcon.fromTheme("system-software-install"), "Installation")
+        self.tab_widget.addTab(self._create_scrollable_area(self.experimental_widget), QIcon.fromTheme("preferences-plugin"), "Experimental")
+        self.tab_widget.addTab(self._create_scrollable_area(self.security_widget), QIcon.fromTheme("dialog-password"), "Security")
+        self.tab_widget.addTab(self._create_scrollable_area(self.donation_page), QIcon.fromTheme("help-donate"), "Donate")
+        self.tab_widget.addTab(self._create_scrollable_area(self.report_page), QIcon.fromTheme("tools-report-bug"), "Report a Bug")
 
-        content_layout.addWidget(self.settings_stack)
-
-        main_layout.addLayout(content_layout)
-        main_layout.addStretch()
+        main_layout.addWidget(self.tab_widget)
 
         # --- Bottom Buttons ---
         button_layout = QHBoxLayout()
         button_layout.addStretch()
         self.btn_back = QPushButton(QIcon.fromTheme("go-previous", QIcon.fromTheme("arrow-left")), "Back")
+        self.btn_back.setMinimumSize(100, 35)
         button_layout.addWidget(self.btn_back)
         main_layout.addLayout(button_layout)
 
         # --- Connections ---
-        self.nav_list.currentRowChanged.connect(self.settings_stack.setCurrentIndex)
         self.btn_back.clicked.connect(self.back_requested.emit)
+
+    def _create_scrollable_area(self, widget: QWidget) -> QScrollArea:
+        """Wraps a widget in a QScrollArea to make it scrollable."""
+        scroll_area = QScrollArea()
+        scroll_area.setWidgetResizable(True)
+        scroll_area.setFrameShape(QFrame.Shape.NoFrame)
+        # The widget needs to be placed i
+        container = QWidget()
+        layout = QVBoxLayout(container)
+        layout.setContentsMargins(15, 15, 15, 15)
+        layout.addWidget(widget)
+        scroll_area.setWidget(container)
+        
+        return scroll_area
 
     def set_section(self, index: int):
         """Allows external navigation to a specific settings section."""
-        if 0 <= index < self.nav_list.count():
-            self.nav_list.setCurrentRow(index)
-
+        if 0 <= index < self.tab_widget.count():
+            self.tab_widget.setCurrentIndex(index)

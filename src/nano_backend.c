@@ -129,6 +129,12 @@ int handle_apt_operation(int argc, char *argv[]) {
         apt_args[arg_idx++] = "update";
     } else if (strcmp(command_type, "apt-upgrade") == 0) {
         apt_args[arg_idx++] = "upgrade";
+<<<<<<< HEAD
+=======
+        // The python frontend might send full-upgrade, which we can treat as a standard upgrade.
+        // Or we can make it do full-upgrade. Let's stick to full-upgrade for apt-upgrade command.
+        apt_args[arg_idx-1] = "full-upgrade";
+>>>>>>> 0c967ae (Staged changes before pull)
     } else if (strcmp(command_type, "apt-fix-broken") == 0) {
         // This handles 'apt --fix-broken install'
         apt_args[arg_idx++] = "--fix-broken";

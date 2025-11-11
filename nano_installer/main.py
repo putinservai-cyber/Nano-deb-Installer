@@ -8,11 +8,12 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 
 import logging
 from urllib.parse import urlparse, unquote
+import shutil
 import subprocess
 
-from PyQt5.QtCore import Qt, QProcess
-from PyQt5.QtGui import QIcon
-from PyQt5.QtWidgets import (
+from PyQt6.QtCore import Qt, QProcess
+from PyQt6.QtGui import QIcon, QAction
+from PyQt6.QtWidgets import (
     QApplication,
     QMessageBox,
     QStackedWidget,
@@ -20,7 +21,6 @@ from PyQt5.QtWidgets import (
     QVBoxLayout,
     QSizePolicy,
     QMainWindow,
-    QAction,
 )
 
 # Local imports (now absolute)
@@ -66,7 +66,7 @@ def process_deb_file(path_str: str, parent: QWidget):
     if not installed_version:
         # Case 1: Not installed -> Install
         wiz = InstallWizard(path, parent, is_extract_mode=is_extract_mode, pkg_name=pkg_name)
-        wiz.exec_()
+        wiz.exec()
     else:
         # Case 2: It is installed, compare versions
         is_newer = compare_versions(deb_version, 'gt', installed_version)
@@ -82,25 +82,26 @@ def process_deb_file(path_str: str, parent: QWidget):
                                          QMessageBox.Yes | QMessageBox.No, QMessageBox.Yes)
             if reply == QMessageBox.Yes:
                 wiz = InstallWizard(path, parent, is_update=True, is_extract_mode=is_extract_mode, pkg_name=pkg_name)
-                wiz.exec_()
+                wiz.exec()
         elif is_same:
-            # Reinstall or Uninstall
+            # Offer to reinstall or uninstall the package
             msg_box = QMessageBox(parent)
-            msg_box.setIcon(QMessageBox.Information)
+            msg_box.setIcon(QMessageBox.Icon.Question)
+            msg_box.setWindowTitle("Package Already Installed")
             msg_box.setText(f"Package '{pkg_name}' version {installed_version} is already installed.")
             msg_box.setInformativeText("What would you like to do?")
-            reinstall_button = msg_box.addButton("Reinstall", QMessageBox.ActionRole)
-            uninstall_button = msg_box.addButton("Uninstall", QMessageBox.ActionRole)
-            msg_box.addButton(QMessageBox.Cancel)
-            msg_box.exec_()
 
-            clicked_button = msg_box.clickedButton()
-            if clicked_button == reinstall_button:
+            reinstall_button = msg_box.addButton("Reinstall", QMessageBox.ButtonRole.ActionRole)
+            uninstall_button = msg_box.addButton("Uninstall", QMessageBox.ButtonRole.ActionRole)
+            msg_box.addButton(QMessageBox.StandardButton.Cancel)
+            msg_box.exec()
+
+            if msg_box.clickedButton() == reinstall_button:
                 wiz = InstallWizard(path, parent, is_reinstall=True, is_extract_mode=is_extract_mode, pkg_name=pkg_name)
-                wiz.exec_()
-            elif clicked_button == uninstall_button:
-                uninstall_wiz = UninstallWizard(pkg_name, parent)
-                uninstall_wiz.exec_()
+                wiz.exec()
+            elif msg_box.clickedButton() == uninstall_button:
+                wiz = UninstallWizard(pkg_name, parent)
+                wiz.exec()
         else: # deb_version is older
             msg_box = QMessageBox(parent)
             msg_box.setIcon(QMessageBox.Warning)
@@ -110,11 +111,11 @@ def process_deb_file(path_str: str, parent: QWidget):
             
             rollback_button = msg_box.addButton("Roll Back", QMessageBox.AcceptRole)
             msg_box.addButton(QMessageBox.Cancel)
-            msg_box.exec_()
+            msg_box.exec()
 
             if msg_box.clickedButton() == rollback_button:
                 wiz = InstallWizard(path, parent, is_downgrade=True, is_extract_mode=is_extract_mode, pkg_name=pkg_name)
-                wiz.exec_()
+                wiz.exec()
 
 # -----------------------
 # Main Application Window
@@ -173,7 +174,7 @@ class MainWindow(QMainWindow):
 
         # Add a spacer to push the about button to the right
         spacer = QWidget()
-        spacer.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
+        spacer.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
         toolbar.addWidget(spacer)
 
         about_action = QAction(get_icon("help-about", APP_ICON_PATH_SOURCE), "About", self)
@@ -210,12 +211,12 @@ class MainWindow(QMainWindow):
     def _run_update_cache_wizard(self):
         """Launches the wizard to update the apt cache."""
         wiz = UpdateCacheWizard(self)
-        wiz.exec_()
+        wiz.exec()
 
     def _run_upgrade_system_wizard(self):
         """Launches the wizard to perform a full system upgrade."""
         wiz = UpgradeSystemWizard(self)
-        wiz.exec_()
+        wiz.exec()
 
 def handle_command_line_args():
     """Handle command-line arguments for KDE shortcut integration."""
@@ -240,32 +241,26 @@ def show_about_dialog(parent=None):
         # If not installed as a package (e.g., running from source), use the constant.
         display_version = installed_version if installed_version else VERSION
 
-        from PyQt5.QtWidgets import QMessageBox
+        # Use the static QMessageBox.about() for a standard, reliable dialog.
         about_text = f"""
-<h2>{APP_NAME}</h2>
-<p><b>Version:</b> {display_version}</p>
-<p><b>Advanced .deb Package Installer with KDE Integration</b></p>
-<p>Features:</p>
-<ul>
-<li>Security scanning with VirusTotal integration</li>
-<li>Dependency management and automatic installation</li>
-<li>KDE Plasma desktop shortcut creation</li>
-<li>Safe installation and uninstallation</li>
-<li>Native KDE theme integration</li>
-</ul>
-<p><b>Created with &hearts; for KDE neon users.</b></p>
-<p style="font-size: small; color: grey;">Copyright &copy; 2025 putinservai-cyber. All rights reserved.</p>
-"""
-        
-        msg_box = QMessageBox(parent)
-        msg_box.setWindowTitle(f"About {APP_NAME}")
-        msg_box.setTextFormat(Qt.RichText)
-        msg_box.setText(about_text)
-        # Use installed path first, then source path for the about dialog icon
-        # Use the cross-platform icon helper for the about dialog icon
-        icon_pixmap = get_icon(APP_ICON_THEME_NAME, APP_ICON_PATH_INSTALLED).pixmap(64, 64)
-        msg_box.setIconPixmap(icon_pixmap)
-        msg_box.exec_()
+            <h3>{APP_NAME}</h3>
+            <p><b>Version:</b> {display_version}</p>
+            <p>Advanced .deb Package Installer with KDE Integration.</p>
+            <p><b>Features:</b></p>
+            <ul>
+                <li>Security scanning with VirusTotal integration</li>
+                <li>Dependency management and automatic installation</li>
+                <li>KDE Plasma desktop shortcut creation</li>
+                <li>Safe installation and uninstallation</li>
+                <li>Native KDE theme integration</li>
+            </ul>
+            <p>Created with &hearts; for KDE neon users.</p>
+            <p><small>Copyright &copy; 2025 putinservai-cyber. All rights reserved.</small></p>
+        """
+
+        # The QMessageBox.about() method automatically handles the window icon,
+        # title, and rich text formatting.
+        QMessageBox.about(parent, f"About {APP_NAME}", about_text)
         
     except Exception:
         # Fallback to kdialog
@@ -280,7 +275,7 @@ def set_kde_icon_name(app):
     Instead, the icon from the .desktop file is used. We need to tell
     the application the name of its desktop file.
     """
-    app.setDesktopFileName(f'{APP_ICON_THEME_NAME}.desktop')
+    app.setDesktopFileName(APP_ICON_THEME_NAME)
 
 
 def main():
@@ -297,11 +292,17 @@ def main():
     
     # Set appropriate platform theme for better desktop integration
     desktop_env = os.environ.get("XDG_CURRENT_DESKTOP", "").lower()
+    # For modern GTK-based desktops, using qt6ct provides the best integration.
+    # We check if it's installed and set the platform theme accordingly.
     if "QT_QPA_PLATFORMTHEME" not in os.environ:
         if "kde" in desktop_env or "plasma" in desktop_env:
             os.environ["QT_QPA_PLATFORMTHEME"] = "kde"
         elif any(desktop in desktop_env for desktop in ["gnome", "cinnamon", "mate", "xfce", "budgie"]):
-            os.environ["QT_QPA_PLATFORMTHEME"] = "gtk3"
+            # Check for qt6ct, which provides excellent GTK styling for Qt6 apps
+            if shutil.which("qt6ct"):
+                os.environ["QT_QPA_PLATFORMTHEME"] = "qt6ct"
+            else:
+                os.environ["QT_QPA_PLATFORMTHEME"] = "gtk2"
 
     # Set the desktop file name for better KDE integration
     if "kde" in desktop_env or "plasma" in desktop_env:
@@ -317,13 +318,13 @@ def main():
         # When launched with --settings, default to General section (index 0)
         main_win._show_settings_page(SettingsPage.SECTION_GENERAL)
         main_win.show()
-        sys.exit(app.exec_())
+        sys.exit(app.exec())
     
     if args.uninstall:
         # Show uninstall wizard for specified package
         temp_parent = QWidget()
         uninstall_wiz = UninstallWizard(args.uninstall, temp_parent)
-        uninstall_wiz.exec_()
+        uninstall_wiz.exec()
         sys.exit(0)
 
     file_to_process = None
@@ -350,7 +351,7 @@ def main():
         # Launched normally, without a file. Show the main window.
         main_win = MainWindow()
         main_win.show()
-        sys.exit(app.exec_())
+        sys.exit(app.exec())
 
 if __name__ == "__main__":
     main()

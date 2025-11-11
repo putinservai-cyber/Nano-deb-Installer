@@ -1,6 +1,6 @@
-from PyQt5.QtCore import Qt, pyqtSignal, pyqtSlot
-from PyQt5.QtGui import QFont, QIcon, QPixmap
-from PyQt5.QtWidgets import (
+from PyQt6.QtCore import Qt, pyqtSignal, pyqtSlot
+from PyQt6.QtGui import QFont, QIcon, QPixmap
+from PyQt6.QtWidgets import (
     QCheckBox,
     QFileDialog,
     QFrame,
@@ -40,7 +40,7 @@ class AuthenticationDialog(QDialog):
         self.setFixedSize(450, 320)
         
         # Remove window controls for security
-        self.setWindowFlags(Qt.Dialog | Qt.WindowTitleHint | Qt.CustomizeWindowHint)
+        self.setWindowFlags(Qt.WindowType.Dialog | Qt.WindowType.WindowTitleHint | Qt.WindowType.CustomizeWindowHint)
         
         self._setup_ui()
         
@@ -56,7 +56,7 @@ class AuthenticationDialog(QDialog):
         icon_label = QLabel()
         shield_icon = QIcon.fromTheme("dialog-password", QIcon.fromTheme("security-high"))
         icon_label.setPixmap(shield_icon.pixmap(48, 48))
-        icon_label.setAlignment(Qt.AlignTop)
+        icon_label.setAlignment(Qt.AlignmentFlag.AlignTop)
         header_layout.addWidget(icon_label)
         
         # Title and description
@@ -79,7 +79,7 @@ class AuthenticationDialog(QDialog):
         
         desc_label = QLabel(desc_text)
         desc_label.setWordWrap(True)
-        desc_label.setAlignment(Qt.AlignTop)
+        desc_label.setAlignment(Qt.AlignmentFlag.AlignTop)
         
         text_layout.addWidget(title_label)
         text_layout.addWidget(desc_label)
@@ -89,8 +89,8 @@ class AuthenticationDialog(QDialog):
         
         # Separator
         line = QFrame()
-        line.setFrameShape(QFrame.HLine)
-        line.setFrameShadow(QFrame.Sunken)
+        line.setFrameShape(QFrame.Shape.HLine)
+        line.setFrameShadow(QFrame.Shadow.Sunken)
         layout.addWidget(line)
         
         # Password input section
@@ -102,7 +102,7 @@ class AuthenticationDialog(QDialog):
         password_label.setFont(password_font)
         
         self.password_edit = QLineEdit()
-        self.password_edit.setEchoMode(QLineEdit.Password)
+        self.password_edit.setEchoMode(QLineEdit.EchoMode.Password)
         self.password_edit.setPlaceholderText("Your administrator password")
         self.password_edit.setMinimumHeight(35)
         self.password_edit.returnPressed.connect(self.accept)
@@ -167,11 +167,11 @@ class AuthenticationDialog(QDialog):
         
     def _toggle_password_visibility(self, checked):
         if checked:
-            self.password_edit.setEchoMode(QLineEdit.Normal)
+            self.password_edit.setEchoMode(QLineEdit.EchoMode.Normal)
             self.show_password_btn.setIcon(QIcon.fromTheme("view-conceal", QIcon.fromTheme("eye-blocked")))
             self.show_password_btn.setToolTip("Hide password")
         else:
-            self.password_edit.setEchoMode(QLineEdit.Password)
+            self.password_edit.setEchoMode(QLineEdit.EchoMode.Password)
             self.show_password_btn.setIcon(QIcon.fromTheme("view-reveal", QIcon.fromTheme("eye")))
             self.show_password_btn.setToolTip("Show password")
     
@@ -192,7 +192,7 @@ class AuthenticationDialog(QDialog):
     def get_auth_password(parent=None, operation="install software", package_name="", is_retry=False):
         """Static method to show auth dialog and return password"""
         dialog = AuthenticationDialog(parent, operation, package_name, is_retry)
-        if dialog.exec_() == QDialog.Accepted:
+        if dialog.exec() == QDialog.DialogCode.Accepted:
             return dialog.get_password()
         return None
 
@@ -206,7 +206,7 @@ class DependencyPopup(QDialog):
         self.setWindowTitle("Installing Dependencies")
         self.setFixedSize(480, 380)
         self.setModal(True)
-        self.setWindowFlags(Qt.Dialog | Qt.WindowTitleHint | Qt.CustomizeWindowHint)
+        self.setWindowFlags(Qt.WindowType.Dialog | Qt.WindowType.WindowTitleHint | Qt.WindowType.CustomizeWindowHint)
         
         self._setup_ui()
         
@@ -222,7 +222,7 @@ class DependencyPopup(QDialog):
         icon_label = QLabel()
         download_icon = QIcon.fromTheme("download", QIcon.fromTheme("go-down"))
         icon_label.setPixmap(download_icon.pixmap(40, 40))
-        icon_label.setAlignment(Qt.AlignTop)
+        icon_label.setAlignment(Qt.AlignmentFlag.AlignTop)
         header_layout.addWidget(icon_label)
         
         # Title and subtitle
@@ -334,7 +334,11 @@ class OfflinePage(QWidget):
         layout = QVBoxLayout(self)
 
         # A single button to select a .deb file
-        self.btn_select_deb = QPushButton(get_icon("document-open", APP_ICON_PATH_SOURCE), " Select .deb Package...")
+<<<<<<< HEAD
+        self.btn_select_deb = QPushButton(QIcon.fromTheme("document-open", QIcon.fromTheme("folder-open")), " Select .deb Package...")
+=======
+        self.btn_select_deb = QPushButton(QIcon.fromTheme("document-open", QIcon.fromTheme("folder-open")), " Select .deb Package...")
+>>>>>>> 0c967ae (Staged changes before pull)
         self.btn_select_deb.setMinimumHeight(50) # Make the button more prominent
 
         button_layout = QHBoxLayout()
@@ -351,14 +355,14 @@ class OfflinePage(QWidget):
 
     def on_select_deb(self):
         dialog = QFileDialog(self)
-        dialog.setFileMode(QFileDialog.ExistingFile)
+        dialog.setFileMode(QFileDialog.FileMode.ExistingFile)
         dialog.setNameFilter("Debian Packages (*.deb)")
         dialog.setWindowTitle("Select .deb Package")
         dialog.setDirectory(str(Path.home()))
         # Use native file dialog for better desktop integration
-        dialog.setOption(QFileDialog.DontUseNativeDialog, False)
+        dialog.setOption(QFileDialog.Option.DontUseNativeDialog, False)
 
-        if dialog.exec_():
+        if dialog.exec():
             files = dialog.selectedFiles()
             if files:
                 # process_deb_file is imported locally to avoid circular dependency

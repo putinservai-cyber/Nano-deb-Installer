@@ -8,8 +8,8 @@ import re
 import time
 import tarfile
 
-from PyQt5.QtCore import QThread, pyqtSignal
-from PyQt5.QtGui import QPixmap, QIcon
+from PyQt6.QtCore import QThread, pyqtSignal
+from PyQt6.QtGui import QPixmap, QIcon
 
 # -----------------------
 # Worker Thread for background tasks
@@ -199,10 +199,10 @@ def get_icon_for_installed_package(pkg_name: str) -> QPixmap:
 
         # Take the first .desktop file found
         desktop_files = desktop_files_output.strip().split('\n')
-        if not desktop_files or not desktop_files[0]:
+        if not desktop_files or not desktop_files:
             return None
             
-        desktop_file_path = desktop_files[0]
+        desktop_file_path = desktop_files
 
         if not Path(desktop_file_path).is_file():
             return None
@@ -212,7 +212,7 @@ def get_icon_for_installed_package(pkg_name: str) -> QPixmap:
         with open(desktop_file_path, 'r', encoding='utf-8') as f:
             for line in f:
                 if line.strip().startswith("Icon="):
-                    icon_name = line.split("=", 1)[1].strip()
+                    icon_name = line.split("=", 1).strip()
                     break
         if not icon_name:
             return None
@@ -255,7 +255,7 @@ def check_missing_dependencies(depends_string: str, worker=None) -> list[str]:
         if not is_satisfied:
             # If no alternative satisfied the dependency, add the first one to the missing list
             # This is for display purposes in the GUI.
-            missing_deps.append(group[0]['name'])
+            missing_deps.append(group['name'])
             
     return missing_deps
 
@@ -339,8 +339,8 @@ def is_critical_package(pkg_name: str) -> tuple[bool, str]:
         'python3', 'python3-minimal', 'python3.12', 'python3.12-minimal',
         'python3-apt', 'python3-dbus', 'python3-gi', 'python3-pil',
         
-        # Qt/PyQt5 packages (needed for nano-installer)
-        'python3-pyqt5', 'python3-pyqt5.qtcore', 'python3-pyqt5.qtgui',
+        # Qt/PyQt6 packages (needed for nano-installer)
+        'python3-pyqt6', 'python3-pyqt6.qtcore', 'python3-pyqt6.qtgui',
         'python3-pyqt5.qtwidgets', 'libqt5core5a', 'libqt5gui5', 'libqt5widgets5',
         
         # KDE essential packages
@@ -383,7 +383,7 @@ def get_nano_installer_package_name() -> str:
                                 capture_output=True, text=True, check=False)
         if result.returncode == 0:
             # Extract package name from output like "package-name: /path/to/file"
-            return result.stdout.strip().split(':')[0]
+            return result.stdout.strip().split(':')
     except Exception:
         pass
 

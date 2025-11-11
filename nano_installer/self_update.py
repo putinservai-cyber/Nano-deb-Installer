@@ -2,8 +2,8 @@ import subprocess
 import logging
 import requests
 import tempfile
-from PyQt5.QtWidgets import QMessageBox, QApplication, QWidget
-from PyQt5.QtCore import QProcess
+from PyQt6.QtWidgets import QMessageBox, QApplication, QWidget
+from PyQt6.QtCore import QProcess
 from .utils import get_installed_version, compare_versions, get_nano_installer_package_name
 from .constants import APP_NAME, GITHUB_RELEASES_API
 
@@ -27,7 +27,7 @@ def _get_latest_release_info():
             return None, None
         
         # The latest release is the first one in the list.
-        release_info = releases[0]
+        release_info = releases
         
         # The tag_name is typically 'vX.Y.Z', so we strip the 'v'
         latest_version = release_info.get('tag_name', '').lstrip('v')
@@ -63,8 +63,8 @@ def _download_package(parent: QWidget, download_url: str) -> str | None:
     
     try:
         # Create a progress dialog
-        from PyQt5.QtWidgets import QProgressDialog
-        from PyQt5.QtCore import Qt
+        from PyQt6.QtWidgets import QProgressDialog
+        from PyQt6.QtCore import Qt
         progress_dialog = QProgressDialog(f"Downloading {APP_NAME} update...", "Cancel", 0, 100, parent)
         progress_dialog.setWindowTitle("Downloading Update")
         progress_dialog.setWindowModality(Qt.WindowModal)

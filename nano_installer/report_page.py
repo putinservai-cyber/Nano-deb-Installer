@@ -1,8 +1,8 @@
 from . import constants
 import webbrowser
-from PyQt5.QtCore import Qt, pyqtSignal
-from PyQt5.QtGui import QIcon
-from PyQt5.QtWidgets import (
+from PyQt6.QtCore import Qt, pyqtSignal
+from PyQt6.QtGui import QIcon
+from PyQt6.QtWidgets import (
     QLabel,
     QPushButton,
     QVBoxLayout,
@@ -40,7 +40,7 @@ class ReportPage(QWidget):
         subtitle.setWordWrap(True)
         main_layout.addWidget(subtitle)
 
-        main_layout.addWidget(QFrame(frameShape=QFrame.HLine, frameShadow=QFrame.Sunken))
+        main_layout.addWidget(QFrame(frameShape=QFrame.Shape.HLine, frameShadow=QFrame.Shadow.Sunken))
 
         # --- GitHub Button ---
         self.btn_github = QPushButton(QIcon.fromTheme("github"), "Open GitHub Issues Page")
